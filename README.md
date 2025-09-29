@@ -1,6 +1,6 @@
 # Beatrice
 
-## A terminal based chat TUI with E2EE and multi-layer asymmetric encryption (RSA, ECC, AES)
+## A terminal based chat TUI that has absolutely no idea what you're talking about
 
 Most developers, or people who are interested with the inner workings of computers, spend a lot of their time inside the terminal. So, what if you could speak to other users without having to leave the terminal? What if those messages are E2EE too?
 
