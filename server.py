@@ -4,7 +4,7 @@ import threading
 HOST = "127.0.0.1"  # Localhost
 PORT = 55555  # Choose any open port
 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server.bind((HOST, PORT))
 server.listen()
 
