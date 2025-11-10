@@ -3,8 +3,11 @@ import threading
 import sys
 
 
+# Opens a TCP connection
+# Could implement UDP at some stage??
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+# Would love to be able to have these stored on a central server so users don't have to input this everytime...
 nickname = input("Choose your nickname: ")
 
 
@@ -44,7 +47,7 @@ def receive_messages():
             if message == "whoami":
                 client.send(nickname.encode("utf-8"))
             elif message:
-                print(message)
+                print(f"Me: {message}")
             else:
                 print("Connection closed by server.")
                 client.close()
