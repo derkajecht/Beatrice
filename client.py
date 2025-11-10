@@ -2,36 +2,12 @@ import socket
 import threading
 import sys
 
+HOST = "127.0.0.1"
+PORT = 55556
 
-# Opens a TCP connection
-# Could implement UDP at some stage??
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-# Would love to be able to have these stored on a central server so users don't have to input this everytime...
 nickname = input("Choose your nickname: ")
 
-
-# Find the first open port in the given range
-def find_open_port(start_port=1, end_port=8081):
-    for port in range(start_port, end_port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.1)
-            res = sock.connect_ex(("localhost", port))
-            if res == 0:
-                return port
-    return None
-
-
-# Set localhost & the available port (as identified above)
-HOST = "localhost"
-PORT = find_open_port()
-
-# If no port is available, exit
-if PORT is None:
-    print("No open ports available.")
-    sys.exit(1)
-
-# Attempt connection
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     client.connect((HOST, PORT))
 except Exception as e:
@@ -39,15 +15,15 @@ except Exception as e:
     sys.exit()
 
 
-# Continuously listen for messages from the server
 def receive_messages():
+    # Continuously listen for messages from the server
     while True:
         try:
             message = client.recv(1024).decode("utf-8")
-            if message == "whoami":
+            if message == "NICK":
                 client.send(nickname.encode("utf-8"))
             elif message:
-                print(f"Me: {message}")
+                print(message)
             else:
                 print("Connection closed by server.")
                 client.close()
@@ -58,8 +34,8 @@ def receive_messages():
             break
 
 
-# Continuously send messages typed by the user
 def send_messages():
+    # Continuously send messages typed by the user
     while True:
         try:
             message = input("")
@@ -69,12 +45,12 @@ def send_messages():
                 break
             full_message = f"{nickname}: {message}"
             client.send(full_message.encode("utf-8"))
-
-            # See your own message in the chat window
             print(f"Me: {message}")
+
         except KeyboardInterrupt:
             client.close()
             print("\nDisconnected.")
+            client.close()
             break
         except Exception:
             print("Error sending message.")
