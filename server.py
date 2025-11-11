@@ -1,5 +1,6 @@
 import socket
 import threading
+import json
 
 HOST = "127.0.0.1"  # Localhost
 PORT = 55556  # Choose any open port
@@ -17,7 +18,7 @@ def broadcast(message, sender=None):
     for client in clients:
         if client != sender:
             try:
-                client.send(message)
+                client.send(json.dumps(message).encode("utf-8"))
             except:
                 client.close()
                 if client in clients:
@@ -29,15 +30,24 @@ def handle_client(client):
     while True:
         try:
             message = client.recv(1024)
-            if not message:
+            json_message = json.loads(message.decode("utf-8"))
+            if not json_message:
                 raise Exception("Client disconnected")
-            broadcast(message, sender=client)
+            broadcast(json_message, sender=client)
         except:
             if client in clients:
                 index = clients.index(client)
                 nickname = nicknames[index]
-                print(f"{nickname} disconnected")
-                broadcast(f"{nickname} left the chat!\n".encode("utf-8"))
+
+                leave_packet = {
+                    "type": "SERVER_INFO",
+                    "sender": "SERVER",
+                    "recipient": "ALL",
+                    "timestamp": "...",
+                    "content": f"{nickname} has left the chat!"
+                }
+
+                broadcast(leave_packet)
                 clients.remove(client)
                 nicknames.remove(nickname)
             client.close()
@@ -46,18 +56,21 @@ def handle_client(client):
 
 def receive_connections():
     print(f"Server started on {HOST}:{PORT} — waiting for connections...")
+    join_packet = {
+        "type": "SERVER_INFO",
+        "sender": "SERVER",
+        "recipient": "ALL",
+        "timestamp": "...",
+        "content": f"A new user has joined the chat!"
+    }
     while True:
         client, address = server.accept()
         print(f"Connected with {address}")
-
         client.send("NICK".encode("utf-8"))
         nickname = client.recv(1024).decode("utf-8")
         nicknames.append(nickname)
         clients.append(client)
-
-        print(f"{nickname} joined")
-        broadcast(f"{nickname} joined the chat!\n".encode("utf-8"))
-        client.send("Connected to the server!\n".encode("utf-8"))
+        broadcast(join_packet)
 
         thread = threading.Thread(target=handle_client, args=(client,))
         thread.start()
