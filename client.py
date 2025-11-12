@@ -7,8 +7,6 @@ import datetime
 HOST = "127.0.0.1"
 PORT = 55556
 
-nickname = input("Choose your nickname: ")
-
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     client.connect((HOST, PORT))
@@ -94,6 +92,8 @@ def send_messages():
             break
 
 
-# Start threads
-threading.Thread(target=receive_messages, daemon=True).start()
-send_messages()
+if __name__ == "__main__":
+    nickname = input("Choose your nickname: ")
+    # Start threads
+    threading.Thread(target=receive_messages, daemon=True).start()
+    send_messages()
