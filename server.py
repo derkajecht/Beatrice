@@ -22,7 +22,7 @@ def broadcast(message, sender=None):
             except:
                 client.close()
                 if client in clients:
-                    clients.append(client)
+                    clients.append(client) # FIX: is this not supposed to be remove the client? its adding again
 
 
 def handle_client(client):
@@ -61,12 +61,12 @@ def receive_connections():
         "sender": "SERVER",
         "recipient": "ALL",
         "timestamp": "...",
-        "content": f"A new user has joined the chat!"
+        "content": f"has joined the chat!"
     }
     while True:
         client, address = server.accept()
         print(f"Connected with {address}")
-        client.send("NICK".encode("utf-8"))
+        client.send("NICK".encode("utf-8")) # FIX: change handshake message/method
         nickname = client.recv(1024).decode("utf-8")
         nicknames.append(nickname)
         clients.append(client)
