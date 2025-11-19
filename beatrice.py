@@ -6,9 +6,8 @@ from client import send_messages, receive_messages
 # from server import broadcast, handle_client, receive_connections
 
 class Beatrice(App):
-    """A TUI messenger named Beatrice."""
+    # A TUI messenger named Beatrice
     CSS_PATH = "styling.css"
-
 
     def compose(self) -> ComposeResult:
         yield Header(icon="💬")
