@@ -25,8 +25,6 @@ class Client:
         """
         # Initialize client variables and setup basic info.
         # TODO: Security: Input validation for host/port could prevent injection; consider defaults or config files.
-        self.host = str(input("Please provide the server address ('localhost' if it's on your local machine): "))
-        self.port = int(input("Please provide the server port: "))
         self._reader = None
         self.writer = None
 
@@ -178,7 +176,7 @@ class Client:
                 break
             except UnicodeDecodeError as e:
                 yield ("error", "UnicodeDecodeError - {0}".format(e))
-                continue
+                break
 
             # Check server response
             if message_str == "NICK":
