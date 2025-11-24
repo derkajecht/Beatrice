@@ -10,6 +10,7 @@ class BeatriceServer:
     def __init__(self, host: str, port: int) -> None:
         self.host = host
         self.port = port
+
         # Data Structure Reference:
         # self.connected_users = {
         #    "Alice": {
@@ -103,6 +104,7 @@ class BeatriceServer:
                 "writer":writer,
                 "key":_key
             }
+            self.latest_nickname = final_nickname
             return final_nickname
         except Exception:
             return None
@@ -115,9 +117,33 @@ class BeatriceServer:
 
         will need to decode or encode these before sending
         """
-        pass
 
-    async def _message_loop(self, reader, sender_nickname):
+        current_users_list = []
+
+        dir_packet = {
+            "t": "DIR",
+            "p": current_users_list
+        }
+
+        for user in self.connected_users:
+            join_packet = {
+                "n": new_nickname,
+                "k": new_key
+            }
+            if user != new_nickname:
+                try:
+                    self.connected_users[user].get("writer").write((json.dumps(join_packet) + "\n").encode('utf-8'))
+                    current_users_list.append({"n": user, "k": self.connected_users[user]["key"]})
+                except:
+                    pass
+
+        try:
+            writer.write((json.dumps(dir_packet) + "\n").encode('utf-8'))
+            await writer.drain()
+        except Exception:
+            pass
+
+    async def _message_loop(self, reader, nickname):
         """
         This is an infinite loop which will continuously listen for messages and dispatch messages to the intended recipient(s).
 
@@ -125,7 +151,22 @@ class BeatriceServer:
 
         Handle Disconnection: If a client disconnects, make sure to remove them from connected_users list.
         """
-        pass
+        while True: # continuously listen for incoming messages
+            message = await reader.readline()
+            if message == b'': # if an empty string is received, this means the client has disconnected.
+                break
+            if not message or message == b'\n': # if no message is received or an empty message is received, do nothing
+                continue
+
+            try:
+                message_str = message.decode("utf-8") # decode the received bytes into a string
+            except UnicodeDecodeError:
+                return None
+
+            try:
+                handshake_packet = json.loads(message_str) # decrypt the utf8 message into JSON packet if its valid json
+            except json.JSONDecodeError: # json error if there is an invalid json
+                return None
 
     async def _cleanup(self, nickname, writer):
         """
