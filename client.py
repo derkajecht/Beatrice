@@ -8,6 +8,7 @@ import sys
 import json
 import datetime
 
+
 class Client:
     def __init__(self) -> None:
         """
@@ -20,15 +21,14 @@ class Client:
         Generates:
         - AES key to encrypt messages
         - 2048-bit RSA key pair for encryption of the AES key
-        - this keeps performance at an acceptable level and not have to rely on rsa to encrypt/decrypt entire messages, as that works at best O(n^2)??? leaving rsa to encrypt/decrypt a fixed 256 bit key. That is fucking cool
-
+        # Optimization: Hybrid encryption (RSA + AES) used to minimize computational overhead of asymmetric crypto.
         """
         # Initialize client variables and setup basic info.
         # TODO: Security: Input validation for host/port could prevent injection; consider defaults or config files.
         self._reader = None
         self.writer = None
 
-        try: # Error handling on nickname creation
+        try:  # Error handling on nickname creation
             self.nickname = self.set_nickname()
         except Exception as e:
             print(str(e))
@@ -36,36 +36,34 @@ class Client:
 
         # Public and private key generation
         self.private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=2048,
-            backend=default_backend()
+            public_exponent=65537, key_size=2048, backend=default_backend()
         )
         self.public_key = self.private_key.public_key()
 
         # Serialize public key for transmission
         public_key_bytes = self.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        self.public_key_str = public_key_bytes.decode('utf-8')
+        self.public_key_str = public_key_bytes.decode("utf-8")
 
         # Store other users' public keys
         self.user_public_keys = {}
 
         self.connected = False
 
-        self.key_packet = { # Set key packet to send public key for message decryption.
-                "type": "KEY",
-                "key": self.public_key_str,
-                "sender": self.nickname
+        self.key_packet = {  # Set key packet to send public key for message decryption.
+            "type": "KEY",
+            "key": self.public_key_str,
+            "sender": self.nickname,
         }
 
         self.message_packet = {
-        # "type": "DM", # TODO: pass type to send_message once built.
-        "sender": self.nickname,
-        "recipient": "ALL",
-        "timestamp": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"),
-        "content": ""
+            # "type": "DM", # TODO: pass type to send_message once built.
+            "sender": self.nickname,
+            "recipient": "ALL",
+            "timestamp": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"),
+            "content": "",
         }
 
         # self.create_socket()
@@ -91,7 +89,6 @@ class Client:
     def reader(self, value):
         self._reader = value
 
-
     def store_user_public_key(self, nickname, public_key_str):
         """
         Stores the given user's public key in a dictionary with the nickname as the key. This allows for quick lookup of other users' public keys when sending encrypted messages.
@@ -101,11 +98,12 @@ class Client:
 
         """
         try:
-            public_key = serialization.load_pem_public_key(public_key_str.encode("utf-8"), backend=default_backend())
+            public_key = serialization.load_pem_public_key(
+                public_key_str.encode("utf-8"), backend=default_backend()
+            )
             self.user_public_keys[nickname] = public_key
         except Exception as e:
             print(f"Error storing public key for {nickname}: {e}")
-
 
     def set_nickname(self):
         """
@@ -119,7 +117,7 @@ class Client:
 
         According to the RAM model, we have to assume that this assignment is being done in constant time - O(1)
         """
-        #TODO: verify uniqueness. would need to have the server store the nicknames to be able to check uniqeness - that would be cool
+        # TODO: verify uniqueness. would need to have the server store the nicknames to be able to check uniqeness - that would be cool
         nickname = input("Set your nickname:  ").strip()
         if nickname == "":
             raise Exception("Invalid nickname, please try again.")
@@ -143,11 +141,13 @@ class Client:
         Time Complexity: O(1) - single connection attempt
         """
         try:
-            self._reader, self.writer = await asyncio.open_connection(host, port) # Import host & port from server side logic
+            self._reader, self.writer = await asyncio.open_connection(
+                host, port
+            )  # Import host & port from server side logic
         except ConnectionRefusedError:
             raise Exception("Unable to connect to host and port.")
 
-    #TODO: This currently isn't sending the public keys like it should. It's just checking the nickname
+    # TODO: This currently isn't sending the public keys like it should. It's just checking the nickname
     async def check_handshake(self):
         """
         Async method to check the client handshake response. If successful, the client public key is stored in the Client class object so messages can be sent to and from the connected client(s).
@@ -165,8 +165,10 @@ class Client:
         """
         while True:
             try:
-                message = await self.reader.read(1024) # Listen for messages from the server
-                if not message: # if no data received return false
+                message = await self.reader.read(
+                    1024
+                )  # Listen for messages from the server
+                if not message:  # if no data received return false
                     break
 
                 message_str = message.decode("utf-8").strip()
@@ -186,7 +188,7 @@ class Client:
                         self.writer.write(self.nickname.encode())
                         await self.writer.drain()
                     yield ("success", "Nickname sent successfully")
-                except (OSError):
+                except OSError:
                     # Failed to send nickname
                     yield ("error", "Failed to send nickname")
                     break
@@ -201,7 +203,6 @@ class Client:
         """
         await self.connect_to_server(self.host, self.port)
         await self.check_handshake()
-
 
     # def receive_packet(self):
     #     try:
@@ -237,11 +238,17 @@ class Client:
         # Continuously listen for messages from the server
         while True:
             try:
-                message = await self.reader.read(1024) # Listen for messages from the server
-                if not message: # If a message is not received, break from the loop silently
+                message = await self.reader.read(
+                    1024
+                )  # Listen for messages from the server
+                if (
+                    not message
+                ):  # If a message is not received, break from the loop silently
                     break
-                message_str = message.decode("utf-8") # If message received, decode into UTF-8 format
-            except OSError as e: # If there is an error, break from the loop,
+                message_str = message.decode(
+                    "utf-8"
+                )  # If message received, decode into UTF-8 format
+            except OSError as e:  # If there is an error, break from the loop,
                 yield ("error", "OSError - {0}".format(e))
                 break
             except asyncio.IncompleteReadError:
@@ -251,25 +258,32 @@ class Client:
                 continue
 
             try:
-                local_packet = json.loads(message_str) # decrypt the utf8 message into JSON packet if its valid json
-            except json.JSONDecodeError as e: # json error if there is an invalid json
-                yield("error","JSONDecodeError - {0}".format(e))
+                local_packet = json.loads(
+                    message_str
+                )  # decrypt the utf8 message into JSON packet if its valid json
+            except json.JSONDecodeError as e:  # json error if there is an invalid json
+                yield ("error", "JSONDecodeError - {0}".format(e))
                 continue
 
-            sender = local_packet.get("sender", "Unknown") # Assign the sender, message  of a particular packet using get method
+            sender = local_packet.get(
+                "sender", "Unknown"
+            )  # Assign the sender, message  of a particular packet using get method
             content = local_packet.get("content", "")
 
             if local_packet.get("type") == "DM":
-                # content = self.private_key.decrypt(
-                #     content.encode("latin1"), # The content that is to be decoded and decrypted is encoded into bytes using latin1 encoding,
-                #     padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), # Padding added
-                #     algorithm=hashes.SHA256(),
-                #     label=None)
-                # )
+                content = self.private_key.decrypt(
+                    content.encode(
+                        "latin1"
+                    ),  # The content that is to be decoded and decrypted is encoded into bytes using latin1 encoding,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),  # Padding added
+                        algorithm=hashes.SHA256(),
+                        label=None,
+                    ),
+                )
                 pass
 
-
-            if not all([sender, content]): # validate that we have valid data
+            if not all([sender, content]):  # validate that we have valid data
                 continue
 
             yield (content, sender)
@@ -279,11 +293,8 @@ class Client:
             # else:
             #     yield(f"[{timestamp}] {sender}: {content}")
 
-
     # def send_message(self, message):
     #     if self.connected:
-
-
 
 
 # def send_messages():
@@ -318,7 +329,9 @@ class Client:
 
 
 if __name__ == "__main__":
+
     async def main():
         client = Client()
         await client.initialise()
+
     asyncio.run(main())

@@ -8,8 +8,8 @@ import random
 
 class BeatriceServer:
     def __init__(self, host: str, port: int) -> None:
-        self.host = host
-        self.port = port
+        self.host: str = host
+        self.port: int = port
 
         # Data Structure Reference:
         # self.connected_users = {
@@ -20,19 +20,22 @@ class BeatriceServer:
         # }
         self.connected_users = {}
 
-    async def _receive_packet(self, reader):
+    async def _receive_packet(self, reader) -> dict | None:
         try:
-            message = await reader.readline()
-            if message == b'': # if an empty string is received, this means the client has disconnected.
+            message: str = await reader.readline()
+            if (
+                message == b""
+            ):  # if an empty string is received, this means the client has disconnected.
                 raise Exception("Client has disconnected. Connection will be closed.")
-            elif not message or message == b'\n':
-                return None # if no message is received or an empty message is received, do nothing
+            elif not message or message == b"\n":
+                return None  # if no message is received or an empty message is received, do nothing
 
-            packet = json.loads(message.decode("utf-8")) # decrypt the utf8 message into JSON packet if its valid json
+            packet = json.loads(
+                message.decode("utf-8")
+            )  # decrypt the utf8 message into JSON packet if its valid json
             return packet
-        except json.JSONDecodeError: # json error if there is an invalid json
+        except json.JSONDecodeError:  # json error if there is an invalid json
             return None
-
 
     async def _send_packet(self, writer, packet):
         """
@@ -42,9 +45,11 @@ class BeatriceServer:
         Safety: Wrap in try/except to ignore broken pipes.
         """
         try:
-            writer.write((json.dumps(packet) + "\n").encode("utf-8")) # Send the error packet
+            writer.write(
+                (json.dumps(packet) + "\n").encode("utf-8")
+            )  # Send the error packet
             await writer.drain()
-        except Exception: # If an exception occurs
+        except Exception:  # If an exception occurs
             pass
 
     async def start_server(self):
@@ -57,7 +62,21 @@ class BeatriceServer:
         """
         This will handle most of the server side logic and make sure its called in the right order.
         """
-        pass
+        # 1. Perform handshake
+        nickname = await self._handshake(reader, writer)
+        if not nickname:
+            writer.close()
+            await writer.write_closed()
+            return
+
+        # 2. Synchronise
+        await self._synchronise(writer, new_nickname, new_key)
+
+        # 3. Init message loop
+        await self._message_loop(reader, nickname)
+
+        # 4. Cleanup on disconnect
+        await self._cleanup(nickname, writer)
 
     async def _handshake(self, reader, writer):
         """
@@ -84,47 +103,57 @@ class BeatriceServer:
             elif packet.get("t") == "H":
 
                 # Get the values from the decoded json packet
-                _type = packet.get("t") # Type of packet recieved
-                _nickname = packet.get("n") # Nickname
-                _key = packet.get("k") # Public key
+                _type = packet.get("t")  # Type of packet recieved
+                _nickname = packet.get("n")  # Nickname
+                _key = packet.get("k")  # Public key
 
-                if not all([_type, _nickname, _key]): # Checks to see that all fields are not none, if any data is missing, send the error packet to the user.
-                    error_msg = "Missing required handshake packet data fields." # Custom error message to send on failure
+                if not all(
+                    [_type, _nickname, _key]
+                ):  # Checks to see that all fields are not none, if any data is missing, send the error packet to the user.
+                    error_msg = "Missing required handshake packet data fields."  # Custom error message to send on failure
                     await self._send_packet(writer, {"t": "ERR", "c": error_msg})
                     return None
 
                 # Check that the data packet contains the key information.
                 if not _key.startswith("-----BEGIN PUBLIC KEY"):
-                    error_msg = "Invalid public key." # Set custom error message on failure
+                    error_msg = (
+                        "Invalid public key."  # Set custom error message on failure
+                    )
                     await self._send_packet(writer, {"t": "ERR", "c": error_msg})
                     return None
 
                 try:
-                    serialization.load_pem_public_key( _key.encode('utf-8')) # If this passes, the key is mathematically valid
-                except (ValueError, TypeError): # If it does not pass, ValueError is raised, indicating that the public key is invalid.
+                    serialization.load_pem_public_key(
+                        _key.encode("utf-8")
+                    )  # If this passes, the key is mathematically valid
+                except (
+                    ValueError,
+                    TypeError,
+                ):  # If it does not pass, ValueError is raised, indicating that the public key is invalid.
                     error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
                     await self._send_packet(writer, {"t": "ERR", "c": error_msg})
                     return None
 
                 try:
-                    final_nickname = _nickname # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
+                    final_nickname = _nickname  # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
                     if final_nickname in self.connected_users:
-                        suffix = random.randint(100,999)
+                        suffix = random.randint(100, 999)
                         final_nickname = f"{_nickname}#{suffix}"
-                    self.connected_users[final_nickname] = { # Store this in the connected_users dict
-                        "writer":writer,
-                        "key":_key
-                    }
+                    self.connected_users[final_nickname] = (
+                        {  # Store this in the connected_users dict
+                            "writer": writer,
+                            "key": _key,
+                        }
+                    )
                     self.latest_nickname = final_nickname
                     return final_nickname
                 except Exception:
                     return None
 
-            else: # If the packet type doesn't begin with "H" which indicates its a handshake request.
-                error_msg = "Error: Received non-handshake packet." # Set custom error message on failure
+            else:  # If the packet type doesn't begin with "H" which indicates its a handshake request.
+                error_msg = "Error: Received non-handshake packet."  # Set custom error message on failure
                 await self._send_packet(writer, {"t": "ERR", "c": error_msg})
                 return None
-
 
     async def _synchronise(self, writer, new_nickname, new_key):
         """
@@ -134,23 +163,31 @@ class BeatriceServer:
         will need to decode or encode these before sending
         """
 
-        current_users_list = [] # list of currently connected users, and their public keys. to be sent to new person.
+        current_users_list = (
+            []
+        )  # list of currently connected users, and their public keys. to be sent to new person.
 
-        dir_packet = { # Current users list packet. To be sent to the new person only.
+        dir_packet = {  # Current users list packet. To be sent to the new person only.
             "t": "DIR",
-            "p": current_users_list
+            "p": current_users_list,
         }
 
-        join_packet = { # Info on the recently joined person, to be sent to everyone else. Bosh
-            "n": new_nickname,
-            "k": new_key
-        }
+        join_packet = (
+            {  # Info on the recently joined person, to be sent to everyone else. Bosh
+                "n": new_nickname,
+                "k": new_key,
+            }
+        )
 
         for user in self.connected_users:
             if user != new_nickname:
                 try:
-                    self.connected_users[user].get("writer").write((json.dumps(join_packet) + "\n").encode('utf-8'))
-                    current_users_list.append({"n": user, "k": self.connected_users[user]["key"]})
+                    self.connected_users[user].get("writer").write(
+                        (json.dumps(join_packet) + "\n").encode("utf-8")
+                    )
+                    current_users_list.append(
+                        {"n": user, "k": self.connected_users[user]["key"]}
+                    )
                 except:
                     pass
 
@@ -174,12 +211,11 @@ class BeatriceServer:
         }
 
         """
-        while True: # continuously listen for incoming messages
+        while True:  # continuously listen for incoming messages
             try:
                 packet = await self._receive_packet(reader)
             except Exception:
                 break
-
 
             if packet is None:
                 continue
@@ -192,17 +228,21 @@ class BeatriceServer:
                     for user in self.connected_users:
                         if user != nickname:
                             try:
-                                await self._send_packet(self.connected_users[user].get("writer"), packet)  # send to all
+                                await self._send_packet(
+                                    self.connected_users[user].get("writer"), packet
+                                )  # send to all
                             except:
                                 pass
                 else:
                     if recipient in self.connected_users:
                         if recipient != nickname:
                             try:
-                                await self._send_packet(self.connected_users[recipient].get("writer"), packet)  # send to all
+                                await self._send_packet(
+                                    self.connected_users[recipient].get("writer"),
+                                    packet,
+                                )  # send to all
                             except:
                                 pass
-
 
     async def _cleanup(self, nickname, writer):
         """
@@ -215,6 +255,7 @@ class BeatriceServer:
         should also close the server if no connections are active
         """
         pass
+
 
 # --- Execution ---
 if __name__ == "__main__":
