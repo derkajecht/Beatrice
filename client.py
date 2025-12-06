@@ -10,7 +10,7 @@ import datetime
 
 
 class Client:
-    def __init__(self) -> None:
+    def __init__(self, host: str, port: int, nickname: str) -> None:
         """
         Inits the chat client with RSA key pair and connection settings.
 
@@ -25,14 +25,19 @@ class Client:
         """
         # Initialize client variables and setup basic info.
         # TODO: Security: Input validation for host/port could prevent injection; consider defaults or config files.
-        self._reader = None
-        self.writer = None
 
-        try:  # Error handling on nickname creation
-            self.nickname = self.set_nickname()
-        except Exception as e:
-            print(str(e))
-            sys.exit(1)
+        # Aysncio shtuff
+        self._reader: None = None
+        self.writer: None = None
+        # This is so background tasks have a place to put data
+        self.event_queue = asyncio.Queue()
+
+        # Store host & port
+        self.host = host
+        self.port = port
+
+        # Take the nickname input and store it
+        self.nickname = nickname
 
         # Public and private key generation
         self.private_key = rsa.generate_private_key(
@@ -52,22 +57,52 @@ class Client:
 
         self.connected = False
 
-        self.key_packet = {  # Set key packet to send public key for message decryption.
-            "type": "KEY",
-            "key": self.public_key_str,
-            "sender": self.nickname,
-        }
+        self.handshake_packet =
+        # packet structure for reference
+        # {
+        #   "t": "H",              // Type: Handshake
+        #   "n": "Alice",          // Nickname (String)
+        #   "k": "-----BEGIN..."   // Public Key (PEM String)
+        # }
+        (
+            {  # Set key packet to send public key for message decryption.
+                "t": "H",
+                "n": self.nickname,
+                "k": self.public_key_str,
+            }
+        )
 
-        self.message_packet = {
-            # "type": "DM", # TODO: pass type to send_message once built.
-            "sender": self.nickname,
-            "recipient": "ALL",
-            "timestamp": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"),
-            "content": "",
-        }
+    async def _receive_packet(self) -> None | dict[str, str]:
+        try:
+            message: str = await self.reader.readline()
+            if (
+                message == b""
+            ):  # if an empty string is received, this means the client has disconnected.
+                raise Exception("Client has disconnected. Connection will be closed.")
+            elif not message or message == b"\n":
+                return None  # if no message is received or an empty message is received, do nothing
 
-        # self.create_socket()
-        # self.check_handshake()
+            packet = json.loads(
+                message.decode("utf-8")
+            )  # decrypt the utf8 message into JSON packet if its valid json
+            return packet
+        except json.JSONDecodeError:  # json error if there is an invalid json
+            return None
+
+    async def _send_packet(self, packet):
+        """
+        1. Encodes the packet to JSON bytes (with newline).
+        2. Writes it to the specific writer.
+        3. Drains the writer to ensure it sent.
+        Safety: Wrap in try/except to ignore broken pipes.
+        """
+        try:
+            self.writer.write(
+                (json.dumps(packet) + "\n").encode("utf-8")
+            )
+            await self.writer.drain()
+        except Exception:  # If an exception occurs
+            pass
 
     @property
     def reader(self):
@@ -105,24 +140,44 @@ class Client:
         except Exception as e:
             print(f"Error storing public key for {nickname}: {e}")
 
-    def set_nickname(self):
-        """
-        Gets a user set nickname from the user.
+    async def start(self) -> None:
 
-        Raises:
-            if nickname is empty, raise exception
+        # Connection
+        try:
+            await self.connect_to_server(self.host, self.port)
+            await self.check_handshake()
 
-        return:
-            str nickname
+            # Bridge between network end ui
+            self.event_queue = asyncio.Queue()
 
-        According to the RAM model, we have to assume that this assignment is being done in constant time - O(1)
-        """
-        # TODO: verify uniqueness. would need to have the server store the nicknames to be able to check uniqeness - that would be cool
-        nickname = input("Set your nickname:  ").strip()
-        if nickname == "":
-            raise Exception("Invalid nickname, please try again.")
-        else:
-            return nickname
+        except Exception as e:
+            print(f"Failed to connect: {e}")
+            return
+
+        try:
+            # Listens for messages
+            receive_task = asyncio.create_task(self.receive_messages())
+
+            # Launch the tui
+            tui_task = asyncio.create_task(self.run_tui())
+
+            # Handles user input
+            input_task = asyncio.create_task(self.handle_user_input())
+
+            # Keep the app running
+            done, pending = await asyncio.wait(
+                [receive_task, tui_task, input_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+
+        except Exception:
+            return
+
+        finally:
+            await self._cleanup()
 
     async def connect_to_server(self, host, port):
         """
@@ -163,39 +218,14 @@ class Client:
         i think this would run in O(1) as if there is no message then it will exit immediately. even if data is received, it's being accessed through a json dict which allows for constant time access.
 
         """
-        while True:
-            try:
-                message = await self.reader.read(
-                    1024
-                )  # Listen for messages from the server
-                if not message:  # if no data received return false
-                    break
 
-                message_str = message.decode("utf-8").strip()
+        # Send the Handshake Packet immediately
+        self._send_packet(self.handshake_packet)
 
-            except OSError as e:
-                yield ("error", "OSError - {0}".format(e))
-                break
-            except UnicodeDecodeError as e:
-                yield ("error", "UnicodeDecodeError - {0}".format(e))
-                break
-
-            # Check server response
-            if message_str == "NICK":
-                # Send nickname
-                try:
-                    if self.writer:
-                        self.writer.write(self.nickname.encode())
-                        await self.writer.drain()
-                    yield ("success", "Nickname sent successfully")
-                except OSError:
-                    # Failed to send nickname
-                    yield ("error", "Failed to send nickname")
-                    break
-
-            else:
-                yield ("error", "Invalid message received from server")
-                continue
+        # Listen for response (The server might send ERR or DIR)
+        # If successful, Server sends nothing specific back immediately,
+        # it just proceeds to _synchronise and sends the DIR packet.
+        return True
 
     async def initialise(self):
         """
@@ -203,22 +233,6 @@ class Client:
         """
         await self.connect_to_server(self.host, self.port)
         await self.check_handshake()
-
-    # def receive_packet(self):
-    #     try:
-    #         message = await self.reader.read(100)
-    #         message_str = message.decode("utf-8")
-    #     except (OSError, UnicodeDecodeError):
-    #         return False
-    #     if not message:
-    #         return False
-    #     try:
-    #         local_packet = json.loads(message_str)
-    #         if local_packet.get("type") == "KEY":
-    #             self.cipher =
-    #         return local_packet
-    #     except json.JSONDecodeError:
-    #         return message_str
 
     async def receive_messages(self):
         """
@@ -237,44 +251,17 @@ class Client:
         """
         # Continuously listen for messages from the server
         while True:
-            try:
-                message = await self.reader.read(
-                    1024
-                )  # Listen for messages from the server
-                if (
-                    not message
-                ):  # If a message is not received, break from the loop silently
-                    break
-                message_str = message.decode(
-                    "utf-8"
-                )  # If message received, decode into UTF-8 format
-            except OSError as e:  # If there is an error, break from the loop,
-                yield ("error", "OSError - {0}".format(e))
+            packet = await self._receive_packet()
+
+            if not packet:
                 break
-            except asyncio.IncompleteReadError:
-                yield ("error", "Incomplete Read Error")
-                break
-            except UnicodeDecodeError as e:
-                continue
 
-            try:
-                local_packet = json.loads(
-                    message_str
-                )  # decrypt the utf8 message into JSON packet if its valid json
-            except json.JSONDecodeError as e:  # json error if there is an invalid json
-                yield ("error", "JSONDecodeError - {0}".format(e))
-                continue
+            # sender = packet.get("r")  # Get recipient
+            # content = packet.get("m")  # Get message content
 
-            sender = local_packet.get(
-                "sender", "Unknown"
-            )  # Assign the sender, message  of a particular packet using get method
-            content = local_packet.get("content", "")
-
-            if local_packet.get("type") == "DM":
+            if packet.get("t") == "M":
                 content = self.private_key.decrypt(
-                    content.encode(
-                        "latin1"
-                    ),  # The content that is to be decoded and decrypted is encoded into bytes using latin1 encoding,
+                    content.encode( "latin1"),  # The content that is to be decoded and decrypted is encoded into bytes using latin1 encoding,
                     padding.OAEP(
                         mgf=padding.MGF1(algorithm=hashes.SHA256()),  # Padding added
                         algorithm=hashes.SHA256(),
@@ -283,18 +270,50 @@ class Client:
                 )
                 pass
 
-            if not all([sender, content]):  # validate that we have valid data
+            if not all([sender, content]):  # confirm that we have valid data
                 continue
 
             yield (content, sender)
 
-            # if sender == "SERVER":
-            #     yield(f"*** {content} ***")
-            # else:
-            #     yield(f"[{timestamp}] {sender}: {content}")
+    async def handle_user_input(self):
+        # Collect input from the user (must be non-blocking)
+        # Checks to see if the message is intended for a specific person, if not, broadcast to all. Will need to loop through current connected_users if sending to all.
+        # Encrypt the message with the AES key.
+        # Encrypt the AES key with the recipients public key. Might be complex loop if sending to more than one user.
+        # Build the message packet;
+        # {
+        #   "t": "M",              // Type: Message
+        #   "r": "Bob",            // Recipient: "Nickname" or "ALL"
+        #   "s": "Alice",          // Sender (Added by Server)
+        #
+        #   "iv": "...",           // AES Initialization Vector (Base64 String)
+        #   "key": "...",          // The AES Key, encrypted with Recipient's RSA Public Key (Base64 String)
+        #   "m": "..."             // The Message Content, encrypted with the AES Key (Base64 String)
+        # }
+        # Send the packet via _send_packet method
+        while True:
+            try:
+                # Get the input from the user but make it non-blocking
+                raw_input = await asyncio.get_event_loop().run_in_executor(None, input)
 
-    # def send_message(self, message):
-    #     if self.connected:
+                # Check for broadcast or DM
+                if raw_input.startswith("@"):
+
+                    # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
+                    parts = raw_input[1:].split(" ", 1)
+                    if len(parts) == 2:
+                        recipient = parts[0]
+                        content = parts[1]
+                    else:
+                        print("Usage: @Nickname Message")
+                        continue
+
+                    if recipient != "ALL":
+                        for user in self.connected
+
+                else:
+                    recipient = "ALL"
+                    content = raw_input
 
 
 # def send_messages():
@@ -328,10 +347,23 @@ class Client:
 #             break
 
 
+# --- Execution ---
 if __name__ == "__main__":
 
-    async def main():
-        client = Client()
-        await client.initialise()
+    # Take user nickname input before calling asyncio to avoid blocking
+    user_nickname = input("Enter your nickname: ").strip()
 
-    asyncio.run(main())
+    # Check if user_nickname is empty, if it is, kick em out
+    if not user_nickname:
+        print("Nickname cannot be empty. Exiting")
+        sys.exit(1)
+
+    async def main(host, port, nickname) -> None:
+        # Pass nickname to __init__
+        client = Client(host, port, nickname=user_nickname)
+
+    # Run the main asynchronous entry point
+    try:
+        asyncio.run(main("127.0.0.1", 55556, user_nickname))
+    except KeyboardInterrupt:
+        print("Client stopped.")
