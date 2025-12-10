@@ -1,6 +1,9 @@
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding as sym_padding # This avoids clashing with the rsa padding
 from cryptography.hazmat.backends import default_backend
+import os
 import base64
 import getpass
 import asyncio
@@ -26,11 +29,12 @@ class Client:
         # Initialize client variables and setup basic info.
         # TODO: Security: Input validation for host/port could prevent injection; consider defaults or config files.
 
-        # Aysncio shtuff
+        # Aysncio shtuff /---
         self._reader: None = None
         self.writer: None = None
         # This is so background tasks have a place to put data
         self.event_queue = asyncio.Queue()
+        # ---/
 
         # Store host & port
         self.host = host
@@ -276,11 +280,12 @@ class Client:
             yield (content, sender)
 
     async def handle_user_input(self):
-        # Collect input from the user (must be non-blocking)
-        # Checks to see if the message is intended for a specific person, if not, broadcast to all. Will need to loop through current connected_users if sending to all.
-        # Encrypt the message with the AES key.
-        # Encrypt the AES key with the recipients public key. Might be complex loop if sending to more than one user.
-        # Build the message packet;
+        # - Collect input from the user (must be non-blocking)
+        # - Checks to see if the message is intended for a specific person, if not, broadcast to all. Will need to loop through current connected_users if sending to all.
+        # - Remove whitespace at the start and end of each message
+        # - Encrypt the message with the AES key.
+        # - Encrypt the AES key with the recipients public key. Might be complex loop if sending to more than one user.
+        # - Build the message packet;
         # {
         #   "t": "M",              // Type: Message
         #   "r": "Bob",            // Recipient: "Nickname" or "ALL"
@@ -290,62 +295,119 @@ class Client:
         #   "key": "...",          // The AES Key, encrypted with Recipient's RSA Public Key (Base64 String)
         #   "m": "..."             // The Message Content, encrypted with the AES Key (Base64 String)
         # }
-        # Send the packet via _send_packet method
+        # - Send the packet via _send_packet method
+
+        # Send a little message to the tui to pass onto the user
+        print("Ready to chat! (Type 'exit' or 'quit' to exit or quit)")
+
         while True:
+            # Get the input from the user but make it non-blocking
+            raw_input = await asyncio.get_event_loop().run_in_executor(None, input)
+
+            # if the user enters quit or exit, stop the program
+            if raw_input.strip().lower() in ["exit", "quit"]:
+                print("You have disconnected.")
+                return
+
+            # Assume that the message is being sent to everyone initially
+            recipient = "ALL"
+            content = raw_input
+
+            # Check for DM
+            if raw_input.startswith("@"):
+
+                # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
+                parts = raw_input[1:].split(" ", 1)
+                if len(parts) == 2:
+
+                    # Update the recipient variable with the intended user
+                    recipient = parts[0] # Dont need to strip this because that will have been handled by line 305
+
+                    # Update the content varible with the message content
+                    content = parts[1]
+
+                else: # If message doesn't follow the correct syntax let the user know
+                    print("Usage: @Nickname Message")
+                    continue
+
+        # Generate AES and IV for encryption
+        aes_key = os.urandom(32)
+        iv_key = os.urandom(16) # AES needs 16 bytes to be able to encrypt
+
+        # Pad the message ready for aes encryption
+        padder = sym_padding.PKCS7(128).padder()
+        padded_data = padder.update(content.encode("utf-8")) + padder.finalize()
+
+        # Construct the encryption method and encrypt "content"
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv_key), backend=default_backend())
+        encryptor = cipher.encryptor()
+        encrypted_content_bytes = encryptor.update(padded_data) + encryptor.finalize()
+
+        # Convert back to string for the packet
+        b64_iv = base64.b64encode(iv_key).decode('utf-8')
+        b64_content = base64.b64encode(encrypted_content_bytes).decode('utf-8')
+
+        # Create empty targets list to populate with recipients
+        targets = []
+
+        if recipient == "ALL":
+            # If true, send to everyone in our directory
+            targets = list(self.user_public_keys.keys())
+        else: # If the message is not being sent to everyone, add the intended recipient to targets
+            if recipient in self.user_public_keys:
+                targets = [recipient]
+            else:
+                # If the user was not found, let the user know
+                print(f"Error: User {recipient} not found.")
+                continue
+
+        # If no targets were received, let the user know
+        if not targets:
+            print("No other users connected.")
+
+        # For all of the nickname(s) in targets.
+        # - Get their public RSA key
+        # - Encrypt the AES key with the users RSA key
+        for target_nick in targets:
             try:
-                # Get the input from the user but make it non-blocking
-                raw_input = await asyncio.get_event_loop().run_in_executor(None, input)
+                # Get the user(s) public rsa key
+                target_pub_key = self.user_public_keys[target_nick]
 
-                # Check for broadcast or DM
-                if raw_input.startswith("@"):
+                # Encrypt AES Key with users RSA Key
+                encrypted_aes_key = target_pub_key.encrypt(
+                    aes_key,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
+                )
 
-                    # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
-                    parts = raw_input[1:].split(" ", 1)
-                    if len(parts) == 2:
-                        recipient = parts[0]
-                        content = parts[1]
-                    else:
-                        print("Usage: @Nickname Message")
-                        continue
+                # The encrypted aes key, courtesy of rsa. Wicked.
+                b64_encrypted_key = base64.b64encode(encrypted_aes_key).decode('utf-8')
 
-                    if recipient != "ALL":
-                        for user in self.connected
+                # Build Packet
+                message_packet = {
+                    "t": "M",
+                    "r": target_nick,      # Routing: Individual Nickname
+                    # "s": ... server adds this
+                    "iv": b64_iv,          # AES Setup
+                    "key": b64_encrypted_key, # The "Key to the Door"
+                    "m": b64_content       # The Message
+                }
 
-                else:
-                    recipient = "ALL"
-                    content = raw_input
+                await self._send_packet(message_packet)
 
+            # Need to implement better error handling here. Can be a lot stronger. Could check for encryption errors, if the packet wasnt sent etc.
 
-# def send_messages():
-#     # Continuously send messages typed by the user
-#     while True:
-#         try:
-#             message = input("")
-#             print(f"Me: {message}") # TODO: remove this line later
-#             if message.lower() in {"exit", "quit"}:
-#                 print("You have disconnected.")
-#                 client.close()
-#                 break
-#
-#             packet = {
-#                 "type": "DM",
-#                 # "sender": nickname,
-#                 "recipient": "ALL",
-#                 "timestamp": datetime.datetime.now().strftime("%d-%m-%Y %H:%M"),
-#                 "content": message
-#             }
-#
-#             client.send(json.dumps(packet).encode("utf-8"))
-#
-#         except KeyboardInterrupt:
-#             print("\n You have disconnected.")
-#             client.close()
-#             break
-#         except Exception:
-#             print("Error sending message.")
-#             client.close()
-#             break
+            except Exception as e:
+                print(f"Failed to send to {target_nick}: {e}")
 
+        # Feedback to user
+        if recipient == "ALL":
+            print(f"[Broadcast sent to {len(targets)} users]")
+        else:
+            print(f"[DM sent to {recipient}]")
 
 # --- Execution ---
 if __name__ == "__main__":
