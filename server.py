@@ -1,4 +1,3 @@
-from shlex import join
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
@@ -107,7 +106,6 @@ class BeatriceServer:
             elif packet.get("t") == "H":
 
                 # Get the values from the decoded json packet
-                _type = packet.get("t")  # Type of packet recieved
                 _nickname = packet.get("n")  # Nickname
                 _key = packet.get("k")  # Public key
 
@@ -117,7 +115,8 @@ class BeatriceServer:
                 #   "t": "ERR",            // Type: Error
                 #   "c": "User not found"  // Content: Description of the error
                 # }
-                if not all([_type, _nickname, _key]):
+
+                if not all([_nickname, _key]):
                     error_msg = "Missing required handshake packet data fields."  # Custom error message to send on failure
                     err_packet = {"t": "ERR", "c": error_msg}
                     await self._send_packet(writer, err_packet)
