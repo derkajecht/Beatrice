@@ -4,6 +4,13 @@ from cryptography.hazmat.backends import default_backend
 import asyncio
 import json
 import random
+import logging
+
+# Logger setup
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 class BeatriceServer:
@@ -18,7 +25,7 @@ class BeatriceServer:
         #        "key": "-----BEGIN PUBLIC KEY..."
         #    }
         # }
-        self.connected_users = {}
+        self.connected_users: dict[str, dict[str, asyncio.StreamWriter | str]] = {}
 
     async def _receive_packet(self, reader) -> None | dict[str, str]:
         try:
@@ -34,8 +41,9 @@ class BeatriceServer:
                 message.decode("utf-8")
             )  # decrypt the utf8 message into JSON packet if its valid json
             return packet
-        except json.JSONDecodeError:  # json error if there is an invalid json
-            return None
+        except json.JSONDecodeError as e:  # json error if there is an invalid json
+            logger.error(f"Invalid JSON {e}. Message will be skipped")
+            pass
 
     async def _send_packet(self, writer, packet):
         """
@@ -258,9 +266,11 @@ class BeatriceServer:
                     for user in self.connected_users:
                         if user != nickname:
                             try:
-                                await self._send_packet(
-                                    self.connected_users[user].get("writer"),
-                                    message_packet,
+                                asyncio.create_task(
+                                    self._send_packet(
+                                        self.connected_users[user].get("writer"),
+                                        message_packet,
+                                    )
                                 )  # send to all
                             except:
                                 pass

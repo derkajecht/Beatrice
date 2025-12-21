@@ -1,15 +1,32 @@
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import padding as sym_padding # This avoids clashing with the rsa padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
+from cryptography.exceptions import InvalidTag
+from typing import Optional, Union, Dict, List, Tuple, Any
 import os
+import logging
 import base64
-import getpass
 import asyncio
 import sys
 import json
-import datetime
+
+Event = Union[
+    Tuple[str, str, str],  # ("message", sender, content)
+    Tuple[str, str],  # ("error", message)
+    Tuple[str, List[str]],  # ("directory_update", users)
+]
+
+# Logger setup
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# Set max nickname length at 20 chars
+MAX_NICKNAME_LENGTH = 20
 
 
 class Client:
@@ -17,68 +34,59 @@ class Client:
         """
         Inits the chat client with RSA key pair and connection settings.
 
-        Prompts user for:
-        - Server address and port -- might be a little flimsy, would introduce user error
-        - Nickname - same as prev need to rethink this one a bit
-
         Generates:
         - AES key to encrypt messages
         - 2048-bit RSA key pair for encryption of the AES key
         # Optimization: Hybrid encryption (RSA + AES) used to minimize computational overhead of asymmetric crypto.
         """
-        # Initialize client variables and setup basic info.
-        # TODO: Security: Input validation for host/port could prevent injection; consider defaults or config files.
 
-        # Aysncio shtuff /---
-        self._reader: None = None
-        self.writer: None = None
+        # /--- Aysncio shtuff ---
+        self._reader: asyncio.StreamReader | None = None
+        self.writer: asyncio.StreamWriter | None = None
+
         # This is so background tasks have a place to put data
-        self.event_queue = asyncio.Queue()
+        self.event_queue: asyncio.Queue[Event] = asyncio.Queue()
         # ---/
 
-        # Store host & port /---
-        self.host = host
-        self.port = port
+        # /--- Store host & port
+        self.host: str = host
+        self.port: int = port
         # ---/
 
         # Take the nickname input and store it
-        self.nickname = nickname
+        self.nickname: str = nickname
 
-        # Public and private key generation /---
-        self.private_key = rsa.generate_private_key(
+        # /--- Public and private key generation
+        self.private_key: RSAPrivateKey = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()
         )
-        self.public_key = self.private_key.public_key()
+        self.public_key: RSAPublicKey = self.private_key.public_key()
         # ---/
 
-        # Serialize public key for transmission /---
+        # /--- Serialize public key for transmission
         public_key_bytes = self.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        self.public_key_str = public_key_bytes.decode("utf-8")
+        self.public_key_str: str = public_key_bytes.decode("utf-8")
         # ---/
 
-        # Store other users' public keys
-        self.user_public_keys = {}
+        # Store other users public keys
+        self.user_public_keys: dict[str, RSAPublicKey] = {}
 
         # Init connected status as false since we are not connected yet
-        self.connected = False
+        self.connected: bool = False
 
-        # Init handshake packet data /---
-        self.handshake_packet =
-        (
-            {  # Set key packet to send public key for message decryption.
-                "t": "H",
-                "n": self.nickname,
-                "k": self.public_key_str,
-            }
-        )
+        # /--- Init handshake packet data
+        self.handshake_packet: dict[str, str] = {
+            "t": "H",
+            "n": self.nickname,
+            "k": self.public_key_str,
+        }
         # ---/
 
-
     # helper method to avoid re-writing the same lines of code over and over
-    async def _receive_packet(self) -> None | dict[str, str]:
+    async def _receive_packet(self) -> dict[str, Any] | None:
         """
         1. Receives incoming data from the network stream
         2. Checks if data is empty, which indicates no new data is available
@@ -91,28 +99,31 @@ class Client:
             message = await self.reader.readline()
 
             # if an empty string is received, this means the client has disconnected.
-            if ( message == b""):
+            if message == b"":
+                logger.error("Client disconnected")
                 raise Exception("Client has disconnected. Connection will be closed.")
 
             # if no message is received or an empty message is received, do nothing
             elif not message or message == b"\n":
-                return None
+                pass
 
             try:
                 # decrypt the utf8 message into JSON packet if its valid json
-                packet = json.loads( message.decode("utf-8"))
+                packet: dict[str, str] = json.loads(message.decode("utf-8"))
                 return packet
 
             # json error if there is an invalid json
-            except json.JSONDecodeError:
-                return None
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON received: {e}")
+                pass
 
         # generic exception for any other error not covered above
-        except Exception:
-            return None
+        except Exception as e:
+            logger.warning(f"Error receiving packet: {e}")
+            return
 
     # helper method to avoid re-writing the same lines of code over and over
-    async def _send_packet(self, packet):
+    async def _send_packet(self, packet: dict[str, str]):
         """
         1. Encodes the packet to JSON bytes (with newline).
         2. Writes it to the specific writer.
@@ -120,21 +131,21 @@ class Client:
         Safety: Wrap in try/except to ignore broken pipes.
         """
         try:
-
             # Encodes the packet to bytes and writes it to the writer, followed by a newline.
-            self.writer.write(
-                (json.dumps(packet) + "\n").encode("utf-8")
-            )
+            assert self.writer is not None
+            self.writer.write((json.dumps(packet) + "\n").encode("utf-8"))
 
             # Drains the writer's buffer, ensuring that all data has been sent.
+            assert self.writer is not None
             await self.writer.drain()
 
         # If an exception occurs
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error sending packet: {e}")
+            return
 
     @property
-    def reader(self):
+    def reader(self) -> asyncio.StreamReader:
         """
         Property to safely access the asyncio StreamReader.
 
@@ -150,10 +161,10 @@ class Client:
         return self._reader
 
     @reader.setter
-    def reader(self, value):
+    def reader(self, value: asyncio.StreamReader) -> None:
         self._reader = value
 
-    def store_user_public_key(self, nickname, public_key_str):
+    def store_user_public_key(self, nickname: str, public_key_str: str):
         """
         Stores the given user's public key in a dictionary with the nickname as the key. This allows for quick lookup of other users' public keys when sending encrypted messages.
 
@@ -167,48 +178,9 @@ class Client:
             )
             self.user_public_keys[nickname] = public_key
         except Exception as e:
-            print(f"Error storing public key for {nickname}: {e}")
+            logger.error(f"Error storing public key for {nickname}: {e}")
 
-    async def start(self) -> None:
-
-        # Connection
-        try:
-            await self.connect_to_server(self.host, self.port)
-            await self.check_handshake()
-
-            # Bridge between network end ui
-            self.event_queue = asyncio.Queue()
-
-        except Exception as e:
-            print(f"Failed to connect: {e}")
-            return
-
-        try:
-            # Listens for messages
-            receive_task = asyncio.create_task(self.receive_messages())
-
-            # Launch the tui
-            tui_task = asyncio.create_task(self.run_tui())
-
-            # Handles user input
-            input_task = asyncio.create_task(self.handle_user_input())
-
-            # Keep the app running
-            done, pending = await asyncio.wait(
-                [receive_task, tui_task, input_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for task in pending:
-                task.cancel()
-
-        except Exception:
-            return
-
-        finally:
-            await self._cleanup()
-
-    async def connect_to_server(self, host, port):
+    async def connect_to_server(self, host: str, port: int):
         """
         Establish TCP connection to the chat server. - could use udp down the line for fun?
 
@@ -229,20 +201,17 @@ class Client:
                 host, port
             )  # Import host & port from server side logic
         except ConnectionRefusedError:
+            logger.error(f"Could not connect to host and port.")
             raise Exception("Unable to connect to host and port.")
 
-    #TODO: change yield to return. This should just return true or false, we aren't waiting on anything else from this.
-    async def check_handshake(self):
+    async def check_handshake(self) -> bool:
         """
         Async method to check the client handshake response. If successful, the client public key is stored in the Client class object so messages can be sent to and from the connected client(s).
 
         If no key is received, then the chat is closed as encryption can't be guaranteed.
 
-        Exceptions:
-            If an error occurs during the handshake, it will yield an Exception to pass onto the tui.
-
-        yields:
-            True/False if the client has been granted encryption and the keys have successfully been exchanged
+        Returns:
+            True if handshake successful, False otherwise.
         """
 
         # Send the Handshake Packet immediately
@@ -251,8 +220,10 @@ class Client:
 
         # If there is an error while sending the packet, then log and exit
         except Exception as e:
-            print(f"Error sending handshake: {e}! Exiting. Please try reconnecting. ")
-            return
+            logger.error(
+                f"Error sending handshake: {e}! Exiting. Please try reconnecting. "
+            )
+            return False
 
         # Listen for response (The server might send ERR or DIR)
         # If successful, Server sends nothing specific back immediately,
@@ -263,20 +234,18 @@ class Client:
             if not response_packet:
                 pass
 
-            if response_packet.get("t") == "ERR":
-
+            if response_packet and response_packet.get("t") == "ERR":
                 # get the actul error message from the error packet
-                error_message = response.get("c")
-                print(f"Error received: {error_message}! Exiting. Please try reconnecting.")
-                return
+                error_message = response_packet.get("c")
+                logger.error(
+                    f"Error received: {error_message}! Exiting. Please try reconnecting."
+                )
+                return False
 
             # if we receive a dir packet. get the data from it.
-            elif response_packet.get("t") == "DIR":
-
+            elif response_packet and response_packet.get("t") == "DIR":
                 # Get the list of connected users from the dir packet, send by the server and store them in a var
                 connected_users_list = response_packet.get("p", [])
-
-                print(f"Handshake succesful! Connected to {len(connected_users_list)} users.")
 
                 for user_data in connected_users_list:
                     nickname = user_data.get("n")
@@ -289,72 +258,153 @@ class Client:
                 # --- need to add the nickname and public key info for each user that is currently connected
 
         except Exception as e:
-            print("Error receiving response from the server! Exiting. Please try reconnecting. ")
-            yield False
+            logger.error(
+                "Error receiving response from the server! Exiting. Please try reconnecting. "
+            )
+            return False
 
-    async def initialise(self):
+        return True
+
+    # async def initialise(self):
+    #     """
+    #     a method to initialise the clients connection to the server and to initiate the handshake. This can't be called within the init as that is not async
+    #     """
+    #     await self.connect_to_server(self.host, self.port)
+    #     await self.check_handshake()
+
+    async def _cleanup(self) -> None:
         """
-        a method to initialise the clients connection to the server and to initiate the handshake. This can't be called within the init as that is not async
+        Properly close connections and clean up resources.
         """
-        await self.connect_to_server(self.host, self.port)
-        await self.check_handshake()
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
+        self.connected = False
 
-    async def receive_messages(self):
+    async def receive_messages(self) -> None:
         """
-        Continuously listens for and yields messages from the server.
+        Continuously listens for packets from the server and handles them.
 
-        This async method processes incoming messages, parses into json and decrypts messages when necessary
-
-        yields:
-            tuple(content, sender) for each message that's been received
-
-        raises:
-            silently closes if the connection has been lost
-
-        runs time and space complexity of O(1) , due to constant time and space complexity of each iteration. The number of iterations will depend on the number of messages received, but each message will take constant time and space to process.
-
+        Processes different packet types: messages, errors, directory updates, etc.
         """
-        # Continuously listen for messages from the server
         while True:
+
+            # Async receiving to avoid blocking the main thread
             packet = await self._receive_packet()
 
+            # If packet is None, it means the connection was closed. Break out of loop.
             if not packet:
                 break
 
-            if packet.get("t") == "M":
-                # extract the sender
+            # Get the type of packet
+            packet_type = packet.get("t")
+
+            # --- MESSAGE PACKET ---
+            if packet_type == "M":
+                # Handle message
                 sender = packet.get("s")
-                # extract encrypted message
                 encrypted_msg_b64 = packet.get("m")
-                # extract encrypted key
                 encrypted_key_b64 = packet.get("k")
-                # extract the iv
                 iv_b64 = packet.get("iv")
 
-                # Decode from base64
-                encrypted_key = base64.b64decode(encrypted_key_b64)
-                encrypted_message = base64.b64decode(encrypted_msg_b64)
-                iv = base64.b64decode(iv_b64)
+                # check to see if all parts of the message packet have been received, if not, chuck em out and log an error
+                if not all([sender, encrypted_msg_b64, encrypted_key_b64, iv_b64]):
+                    logger.error("Message packet incomplete")
+                    continue
 
-                # Decrypt the aes key with the private rsa key
-                aes_key = self.private_key.decrypt(
-                    encrypted_key,
-                    padding.OAEP(
-                        mgf=padding.MGF1(algorithm=hashes.SHA256()),  # Padding added
-                        algorithm=hashes.SHA256(),
-                        label=None,
-                    ),
+                try:
+                    # Decode from base64
+                    encrypted_key = base64.b64decode(encrypted_key_b64)
+                    encrypted_message = base64.b64decode(encrypted_msg_b64)
+                    iv = base64.b64decode(iv_b64)
+
+                    # Decrypt the aes key with the private rsa key
+                    aes_key = self.private_key.decrypt(
+                        encrypted_key,
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None,
+                        ),
+                    )
+
+                    # decrypt the content via aes
+                    aesgcm = AESGCM(aes_key)
+
+                    decrypted_content_bytes = aesgcm.decrypt(
+                        iv, encrypted_message, None
+                    )
+
+                    # decrypt the json content using utf-8 and json.load
+                    decrypted_json_str = decrypted_content_bytes.decode("utf-8")
+
+                    with open("debug_log.txt", "a") as f:
+                        f.write(
+                            f"DEBUG: Type: {type(decrypted_json_str)}, Content: '{decrypted_json_str}'\n"
+                        )
+
+                    message_payload = json.loads(decrypted_json_str)
+
+                    # Send to tui
+                    await self.event_queue.put(("message", message_payload))
+
+                # Skip invalid messages
+                except Exception as e:
+                    logger.error(f"Error decrypting message: {e}")
+                    continue
+
+            # --- JOIN PACKET ---
+            elif packet_type == "J":
+                # Extract the new nickname and key from the packet
+                new_nick, new_key = packet.get("n"), packet.get("k")
+
+                if new_nick and new_key:
+                    self.store_user_public_key(new_nick, new_key)
+
+                    # update the tui with the name of the new user
+                    await self.event_queue.put(
+                        ("join_packet", f"{new_nick} has joined the chat!")
+                    )
+
+            # --- DIR PACKET ---
+            elif packet_type == "DIR":
+                connected_users_list = packet.get("p", [])
+
+                for user_data in connected_users_list:
+                    nick, key = user_data.get("n"), user_data.get("k")
+
+                    if nick and key:
+                        self.store_user_public_key(nick, key)
+
+                await self.event_queue.put(
+                    (
+                        "dir",
+                        f"Connected. Found {len(connected_users_list)} users in the chat.",
+                    )
                 )
-                pass
 
-            # confirm that we have valid data, if not, skip this message and move on to the next one.
-            if not all([sender, content]):
-                continue
+            # --- LEAVE PACKET ---
+            elif packet_type == "L":
+                # assign nickname of user who is leaving to a variable
+                left_nick = packet.get("n")
 
-            # put the data into the queue to be handled by the tui
-            await self.event_queue.put((content, sender))
+                # if that user is inside the public keys dict, delete them from it
+                if left_nick in self.user_public_keys:
+                    del self.user_public_keys[left_nick]
 
-    async def handle_user_input(self):
+                    # update the tui
+                    await self.event_queue.put(
+                        ("leave_packet", f"{left_nick} has left the chat")
+                    )
+
+            # --- ERROR PACKET ---
+            elif packet_type == "ERR":
+                error_message = packet.get("c")
+
+                # update the tui
+                await self.event_queue.put(("err", error_message))
+
+    async def send_message(self, content: str):
         # - Collect input from the user (must be non-blocking)
         # - Checks to see if the message is intended for a specific person, if not, broadcast to all. Will need to loop through current connected_users if sending to all.
         # - Remove whitespace at the start and end of each message
@@ -372,55 +422,60 @@ class Client:
         # }
         # - Send the packet via _send_packet method
 
-        # Send a little message to the tui to pass onto the user. isnt that nice?
-        print("Ready to chat! (Type 'exit' or 'quit' to exit or quit)")
+        # if the user enters quit or exit, stop the program
+        if content.strip().lower() in ["exit", "quit"]:
+            await self.event_queue.put(("status", "You have disconnected."))
+            return
 
-        while True:
-            # Get the input from the user but make it non-blocking
-            raw_input = await asyncio.get_event_loop().run_in_executor(None, input)
+        # Assume that the message is being sent to everyone initially
+        recipient = "ALL"
+        content = content.strip()
 
-            # if the user enters quit or exit, stop the program
-            if raw_input.strip().lower() in ["exit", "quit"]:
-                print("You have disconnected.")
+        # Check for DM
+        if content.startswith("@"):
+            # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
+            parts = content[1:].split(" ", 1)
+            if len(parts) == 2:
+                # Update the recipient variable with the intended user
+                recipient = parts[0].strip()
+
+                # Add in check to make sure you cant send message to yourself
+                if recipient == self.nickname:
+                    await self.event_queue.put(
+                        ("self_message_error", "Cannot send message to yourself.")
+                    )
+                    logger.error(
+                        f"Cannot send a direct message to yourself. Please try again."
+                    )
+                    return
+
+                # Update the content varible with the message content
+                content = parts[1].strip()
+
+            else:  # If message doesn't follow the correct syntax let the user know
+                await self.event_queue.put(
+                    ("dm_usage_error", "Usage: @Nickname Message")
+                )
                 return
+        else:
+            pass
 
-            # Assume that the message is being sent to everyone initially
-            recipient = "ALL"
-            content = raw_input
+        payload_dict = {"sender": self.nickname, "content": content}
 
-            # Check for DM
-            if raw_input.startswith("@"):
-
-                # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
-                parts = raw_input[1:].split(" ", 1)
-                if len(parts) == 2:
-
-                    # Update the recipient variable with the intended user
-                    recipient = parts[0] # Dont need to strip this because that will have been handled by line 305
-
-                    # Update the content varible with the message content
-                    content = parts[1]
-
-                else: # If message doesn't follow the correct syntax let the user know
-                    print("Usage: @Nickname Message")
-                    continue
+        payload_json_str = json.dumps(payload_dict)
 
         # Generate AES and IV for encryption
-        aes_key = os.urandom(32)
-        iv_key = os.urandom(16) # AES needs 16 bytes to be able to encrypt
+        aes_key = AESGCM.generate_key(bit_length=256)
+        aesgcm = AESGCM(aes_key)
+        nonce = os.urandom(12)
 
-        # Pad the message ready for aes encryption
-        padder = sym_padding.PKCS7(128).padder()
-        padded_data = padder.update(content.encode("utf-8")) + padder.finalize()
-
-        # Construct the encryption method and encrypt "content"
-        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv_key), backend=default_backend())
-        encryptor = cipher.encryptor()
-        encrypted_content_bytes = encryptor.update(padded_data) + encryptor.finalize()
+        encrypted_content_bytes = aesgcm.encrypt(
+            nonce, payload_json_str.encode("utf-8"), None
+        )
 
         # Convert back to string for the packet
-        b64_iv = base64.b64encode(iv_key).decode('utf-8')
-        b64_content = base64.b64encode(encrypted_content_bytes).decode('utf-8')
+        b64_iv = base64.b64encode(nonce).decode("utf-8")
+        b64_content = base64.b64encode(encrypted_content_bytes).decode("utf-8")
 
         # Create empty targets list to populate with recipients
         targets = []
@@ -428,17 +483,20 @@ class Client:
         if recipient == "ALL":
             # If true, send to everyone in our directory
             targets = list(self.user_public_keys.keys())
-        else: # If the message is not being sent to everyone, add the intended recipient to targets
+        else:  # If the message is not being sent to everyone, add the intended recipient to targets
             if recipient in self.user_public_keys:
                 targets = [recipient]
             else:
                 # If the user was not found, let the user know
-                print(f"Error: User {recipient} not found.")
-                continue
+                await self.event_queue.put(
+                    ("user_not_found_error", f"Error: User {recipient} not found.")
+                )
+                return
 
         # If no targets were received, let the user know
         if not targets:
-            print("No other users connected.")
+            await self.event_queue.put(("no_targets", "No other users connected."))
+            return
 
         # For all of the nickname(s) in targets.
         # - Get their public RSA key
@@ -454,56 +512,69 @@ class Client:
                     padding.OAEP(
                         mgf=padding.MGF1(algorithm=hashes.SHA256()),
                         algorithm=hashes.SHA256(),
-                        label=None
-                    )
+                        label=None,
+                    ),
                 )
 
                 # The encrypted aes key, courtesy of rsa. Wicked.
-                b64_encrypted_key = base64.b64encode(encrypted_aes_key).decode('utf-8')
+                b64_encrypted_key = base64.b64encode(encrypted_aes_key).decode("utf-8")
 
                 # Build Packet
                 message_packet = {
                     "t": "M",
-                    "r": target_nick,      # Routing: Individual Nickname
+                    "r": target_nick,  # Routing: Individual Nickname
                     # "s": ... server adds this
-                    "iv": b64_iv,          # AES Setup
-                    "k": b64_encrypted_key, # The "Key to the Door"
-                    "m": b64_content       # The Message
+                    "iv": b64_iv,  # AES Setup
+                    "k": b64_encrypted_key,  # The "Key to the Door"
+                    "m": b64_content,  # The Message
                 }
 
                 await self._send_packet(message_packet)
 
-            # Need to implement better error handling here. Can be a lot stronger. Could check for encryption errors, if the packet wasnt sent etc.
+                await self.event_queue.put(
+                    ("my_message", {"sender": "Me: ", "content": content})
+                )
 
             except Exception as e:
-                print(f"Failed to send to {target_nick}: {e}")
+                logger.error(f"Failed to send to {target_nick}: {e}")
 
-        # Feedback to user
         if recipient == "ALL":
-            print(f"[Broadcast sent to {len(targets)} users]")
+            await self.event_queue.put(
+                ("broadcasted_to_users", f"Broadcast sent to {len(targets)} users")
+            )
         else:
-            print(f"[DM sent to {recipient}]")
-
-# --- Execution ---
-if __name__ == "__main__":
-
-    # Take user nickname input before calling asyncio to avoid blocking
-    user_nickname = input("Enter your nickname: ").strip()
-
-    # Check if user_nickname is empty, if it is, kick em out
-    if not user_nickname:
-        print("Nickname cannot be empty. Exiting")
-        sys.exit(1)
-
-    async def main(host, port, nickname) -> None:
-
-        # Pass nickname to __init__
-        client = Client(host, port, nickname=user_nickname)
-        await client.start()
+            await self.event_queue.put(("sent_to_user", f"DM sent to {recipient}"))
 
 
-    # Run the main asynchronous entry point
-    try:
-        asyncio.run(main("127.0.0.1", 55556, user_nickname))
-    except KeyboardInterrupt:
-        print("Client stopped.")
+# # --- Execution ---
+# if __name__ == "__main__":
+#
+#     # Take user nickname input before calling asyncio to avoid blocking
+#     user_nickname = input("Enter your nickname: ").strip()
+#
+#     # Make sure that nickname is alphanumeric chars only
+#     if user_nickname.isalnum():
+#         pass
+#     else:
+#         logger.error("Invalid characters in nickname. Exiting.")
+#         sys.exit(1)
+#
+#     if len(user_nickname) > MAX_NICKNAME_LENGTH:
+#         logger.error(f"Nickname too long. Max length is {MAX_NICKNAME_LENGTH}")
+#         sys.exit(1)
+#
+#     # Check if user_nickname is empty, if it is, kick em out
+#     if not user_nickname:
+#         logger.error("Nickname cannot be empty.")
+#         return.exit(1)
+#
+#     async def main(host: str, port: int, nickname: str) -> None:
+#         # Pass nickname to __init__
+#         client = Client(host, port, nickname=user_nickname)
+#         await client.start()
+#
+#     # Run the main asynchronous entry point
+#     try:
+#         asyncio.run(main("127.0.0.1", 55556, user_nickname))
+#     except KeyboardInterrupt as e:
+#         logger.info("Client stopped.")
