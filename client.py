@@ -442,7 +442,7 @@ class Client:
                 # Add in check to make sure you cant send message to yourself
                 if recipient == self.nickname:
                     await self.event_queue.put(
-                        ("self_message_error", "Cannot send message to yourself.")
+                        ("self_message_error", " You cannot send message to yourself.")
                     )
                     logger.error(
                         f"Cannot send a direct message to yourself. Please try again."
@@ -544,6 +544,12 @@ class Client:
             )
         else:
             await self.event_queue.put(("sent_to_user", f"DM sent to {recipient}"))
+
+    async def display_connected_users(self) -> None:
+        while True:
+            for user in self.user_public_keys:
+                nickname = self.user_public_keys[user]
+                await self.event_queue.put(("connected_users_list", f"{nickname}"))
 
 
 # # --- Execution ---

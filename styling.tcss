@@ -1,0 +1,72 @@
+#login_screen {
+    width: 100%;
+    height: 1fr;
+    align: center middle; /* This centers the Child (the Input) */
+}
+
+.nickname_input {
+    width: 60%; /* Or specific width like 50 */
+    /* Remove align props from here, they don't move the widget */
+}
+
+/* --- UTILITY --- */
+.hidden {
+    display: none;
+}
+
+/* --- Chat Layout --- */
+
+/* The Scrollable Area */
+#chat_log {
+    height: 50%;
+    padding: 1;
+    overflow-y: scroll;
+}
+
+/* The Row (Invisible container that spans full width) */
+.message_row {
+    width: 100%;
+    height: auto;
+    padding-bottom: 0; /* Space between messages */
+}
+
+/* Alignment Logic */
+.received {
+    align-horizontal: left;
+}
+
+.sent {
+    align-horizontal: right;
+}
+
+/* --- MESSAGE BUBBLE STYLING --- */
+
+.bubble {
+    width: auto;
+    max-width: 60%; /* Don't let bubbles stretch too wide */
+    height: auto;
+    background: $surface; /* Default textual background */
+    color: $text;
+}
+
+/* Specific Bubble Colors */
+.received .bubble {
+    background: transparent;
+    color: white;
+    border: round #333333;
+}
+
+.sent .bubble {
+    background: transparent;
+    color: white;
+    border: round #2984D1;
+}
+
+/* System Messages (Join/Leave/Startup) */
+.system_message {
+    width: 100%;
+    text-align: center;
+    color: $text-muted;
+    padding: 1;
+}
+
