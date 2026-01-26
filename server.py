@@ -23,7 +23,11 @@ class BeatriceServer:
         #    "Alice": {
         #        "writer": <asyncio.StreamWriter>,
         #        "key": "-----BEGIN PUBLIC KEY..."
-        #    }
+        #    },
+        #    "Jordan": {
+        #        "writer": <asyncio.StreamWriter>,
+        #        "key": "-----BEGIN PUBLIC KEY..."
+        #    },
         # }
         self.connected_users: dict[str, dict[str, asyncio.StreamWriter | str]] = {}
 
@@ -194,8 +198,8 @@ class BeatriceServer:
                 )
 
         # --- Send current connected user info to the newly connected user ---
+
         # dir_packet structure for reference
-        # Create the packet containing the information of the current connected users
         # {
         #   "t": "DIR",            // Type: Directory
         #   "p": [                 // Payload: List of user objects
@@ -209,27 +213,32 @@ class BeatriceServer:
         #     }
         #   ]
         # }
+
         dir_packet = {
             "t": "DIR",
             "p": current_user_list,
         }
+
         # send the packet to the new user
         await self._send_packet(writer, dir_packet)
 
         # --- Broadcast the join_packet to all other connected users ---
         # Info on the recently joined person, to be sent to everyone else. Bosh
-        # Join packeta structure for reference
+
+        # Join packet structure for reference
         # {
         #   "t": "J",              // Type: Join
         #   "n": "Alice",          // Nickname
         #   "k": "-----BEGIN..."   // Public Key
         # }
+
         join_packet = {
             "t": "J",
             "n": new_nickname,
             "k": new_key,
         }
 
+        # Send the join packet to all users except for the most recently joined user
         for user in self.connected_users:
             if user != new_nickname:
                 target_writer = self.connected_users[user]["writer"]

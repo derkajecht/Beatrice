@@ -12,6 +12,8 @@ import base64
 import asyncio
 import sys
 import json
+import hashlib
+from server import BeatriceServer
 
 Event = Union[
     Tuple[str, str, str],  # ("message", sender, content)
@@ -143,6 +145,34 @@ class Client:
         except Exception as e:
             logger.warning(f"Error sending packet: {e}")
             return
+
+    def get_fingerprint(self, nickname) -> str:
+        """
+        Generate a short, readable hex representation of the fingerprint for a given public key
+        """
+
+        # If the nickname is not in public keys, return "Unknown"
+        if nickname not in self.user_public_keys:
+            return "Unknown"
+
+        # Get the public key for that user
+        key = self.user_public_keys[nickname]
+
+        # Serialize it to bytes
+        key_bytes = key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        # Hash the key bytes using SHA-256
+        sha = hashlib.sha256(key_bytes).hexdigest()
+
+        # return the first 4 characters and last 4 characters of sha256 hash
+        return f"{sha[:4]}:{sha[4:8]}"
+
+    # def online_user_request(self):
+    #     online_list = []
+    #     for user in self.connected
 
     @property
     def reader(self) -> asyncio.StreamReader:
@@ -429,7 +459,10 @@ class Client:
 
         # Assume that the message is being sent to everyone initially
         recipient = "ALL"
-        content = content.strip()
+        if not content:
+            return
+        else:
+            content = content.strip()
 
         # Check for DM
         if content.startswith("@"):
@@ -545,11 +578,19 @@ class Client:
         else:
             await self.event_queue.put(("sent_to_user", f"DM sent to {recipient}"))
 
-    async def display_connected_users(self) -> None:
-        while True:
-            for user in self.user_public_keys:
-                nickname = self.user_public_keys[user]
-                await self.event_queue.put(("connected_users_list", f"{nickname}"))
+    # Generates a list of connected users
+    async def display_connected_users(self) -> set[str]:
+        # create empty list to store usernames
+        online_list = []
+        # Go through every username in user_public_keys
+        for user in self.user_public_keys:
+            # If the current user is not the same as the nickname
+            if user != self.nickname:
+                online_list.append(user)
+            # If the current user is the same as the nickname, add "Me" to the list
+            else:
+                online_list.append("Me")
+        return set(online_list)
 
 
 # # --- Execution ---

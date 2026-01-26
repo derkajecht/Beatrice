@@ -5,8 +5,7 @@
 }
 
 .nickname_input {
-    width: 60%; /* Or specific width like 50 */
-    /* Remove align props from here, they don't move the widget */
+    width: 30%; /* Or specific width like 50 */
 }
 
 /* --- UTILITY --- */
@@ -16,11 +15,25 @@
 
 /* --- Chat Layout --- */
 
+/* Online User List */
+#online_user_log {
+    dock: right;
+    width: 30%;
+    height: 100%;
+    # align: right middle;
+}
+
 /* The Scrollable Area */
 #chat_log {
-    height: 50%;
+    height: 80%;
+    width: 100%;
     padding: 1;
     overflow-y: scroll;
+    align: left middle;
+}
+
+#message_input {
+    width: 100%;
 }
 
 /* The Row (Invisible container that spans full width) */

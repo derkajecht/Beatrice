@@ -1,286 +1,65 @@
-# Chat Application - TODO List
+# Project Roadmap: Secure Chat Application
 
-## 🔴 CRITICAL - Fix These First (App Won't Run)
-
-### Client - Method Signature Bug
-- [ ] **Fix `handle_user_input()` method**
-  - Currently: Method expects `raw_content: str` parameter
-  - Currently: Called with `asyncio.create_task(self.handle_user_input())` - no parameter!
-  - Solution: Either remove it as a background task OR make it take input from a different source
-  - Recommended: Rename to `send_message(content: str)` and call it directly from Textual's input handler
-
-### Client - Remove Broken Architecture
-- [ ] **Delete the `run_tui()` stub method**
-  - It just logs and does nothing
-  - Textual will manage its own event loop, not run as a subtask
-
-- [ ] **Refactor `start()` method**
-  - Don't create 3 concurrent tasks (receiver, tui, input)
-  - Only receiver should be a background task
-  - Textual app should call client methods directly
+**Current Status:** ~85% Functional / ~60% Portfolio-Ready
+**Goal:** Reach 100% "Hiring Standard" for a Security Engineer Portfolio.
 
 ---
 
-## 🟠 HIGH PRIORITY - Core Functionality
+## Phase 1: Security Hardening (Critical)
+*These features demonstrate your understanding of cryptographic integrity and threat modeling.*
 
-### Client - Textual Integration
-- [ ] **Restructure initialization flow**
-  - Create separate methods: `connect_to_server()`, `perform_handshake()`
-  - Make these return boolean (True/False for success)
-  - Call them BEFORE starting Textual app
+- [ ] **1. Implement Replay Protection**
+    - [ ] Update `client.py` (sender): Add `timestamp` (UTC) and `nonce` (random hex) to the message payload dictionary.
+    - [ ] Update `client.py` (receiver): Reject messages where `timestamp` is older than 60 seconds.
+    - [ ] Update `client.py` (receiver): Maintain a set of `seen_nonces` and reject duplicates.
 
-- [ ] **Add `start_receiver()` method**
-  - Starts the `receive_messages()` background task
-  - Call this from Textual's `on_mount()` event
+- [ ] **2. Implement Key Fingerprinting (MITM Protection)**
+    - [ ] Update `client.py`: Create a helper method `get_fingerprint(public_key)` that returns the first 8 characters of the SHA-256 hash (e.g., `a1b2:c3d4`). DONE
+    - [ ] Update `app.py`: Modify the "Online Users" sidebar to display the fingerprint next to the nickname (e.g., `Alice [a1b2]`).
+    - [ ] *Why:* Allows users to visually verify they are talking to the correct person, mitigating Man-in-the-Middle attacks.
 
-- [ ] **Fix event queue data structure**
-  - Your type hint says: `Tuple[str, str, str]` for messages
-  - You're actually putting: `Tuple[str, dict]`
-  - Make them consistent - recommend using dict for flexibility
-
-### Client - Event Processing
-- [ ] **Create event consumer in Textual app**
-  - Make a `process_client_events()` async method
-  - Continuously pull from `client.event_queue`
-  - Update UI based on event type
-  - Run this as a background task in Textual
-
-### Server - Security Basics
-- [ ] **Add packet size limits**
-  - Currently using `reader.readline()` with no limit
-  - Malicious client could send gigabytes
-  - Add `MAX_PACKET_SIZE` constant (suggest 100KB)
-  - Read with size checks
-
-- [ ] **Fix handshake timeout**
-  - Remove the `while True` loop with timeout that catches ALL exceptions
-  - Use single `asyncio.wait_for(packet, timeout=10.0)`
-  - Handle `asyncio.TimeoutError` specifically
-  - Don't break silently on timeout
+- [ ] **3. Traffic Padding (Metadata Protection)**
+    - [ ] Update `client.py` (sender): Pad the JSON payload string with whitespace so its total byte length is a multiple of 256 bytes.
+    - [ ] Update `client.py` (receiver): Strip whitespace from the decrypted JSON before parsing.
+    - [ ] *Why:* Prevents traffic analysis where an attacker guesses the message content based on packet length.
 
 ---
 
-## 🟡 MEDIUM PRIORITY - Stability & UX
+## Phase 2: Resilience & Stability
+*These features make the application robust against real-world network issues.*
 
-### Server - Better Error Handling
-- [ ] **Stop using bare `except: pass`**
-  - You have 5+ places with silent exception swallowing
-  - At minimum: log the exception before passing
-  - Better: handle specific exceptions differently
+- [ ] **4. Handle "Zombie" Connections**
+    - [ ] Update `server.py`: Wrap `writer.write()` in a `try/except` block.
+    - [ ] Logic: If a `BrokenPipeError` or `ConnectionResetError` occurs, immediately remove the user from `connected_users` and close the socket.
 
-- [ ] **Fix nickname collision logic**
-  - Current: Tries once with random number
-  - Problem: What if `Alice#123` already exists?
-  - Add: While loop with counter, max 9999 attempts
+- [ ] **5. Graceful Shutdown**
+    - [ ] Update `app.py`: Catch `Ctrl+C` or the application exit event.
+    - [ ] Logic: Send a final "Leave Packet" to the server so other users are immediately notified that you have gone offline.
 
-### Client - Message Display
-- [ ] **Actually display received messages**
-  - Messages go into `event_queue` but are never consumed
-  - Textual app needs to pull from queue and update UI
-  - Add proper formatting (sender, timestamp, etc.)
-
-### Server - Message Loop Improvements
-- [ ] **Add timeout for idle connections**
-  - Wrap `_receive_packet()` in `asyncio.wait_for()`
-  - Suggest 5 minute timeout
-  - Prevents dead connections from hanging
-
-- [ ] **Validate packet types**
-  - Check that message loop only receives "M" type packets
-  - Log/reject unexpected types
-  - Prevents confusion from misrouted packets
+- [ ] **6. Input Sanitization**
+    - [ ] Update `app.py`: Ensure the nickname validator rejects special characters (like `/`, `\`, `:`, etc.) that could break file paths or UI formatting.
 
 ---
 
-## 🟢 LOW PRIORITY - Polish & Features
+## Phase 3: The "Hiring Manager" Polish
+*Documentation and code quality are what separate students from engineers.*
 
-### Server - Rate Limiting
-- [ ] **Add message rate limiting**
-  - Track message counts per user
-  - Limit to X messages per minute (suggest 60)
-  - Send error packet if exceeded
-  - Clean up old timestamps
+- [ ] **7. Create `SECURITY.md`**
+    - [ ] Document the **Threat Model**: Explicitly state that the server is assumed to be "Honest-but-Curious."
+    - [ ] Document **Limitations**: Acknowledge that you are using TOFU (Trust On First Use) and explain how a verified Key Server would improve security in v2.
 
-### Client - Input Validation
-- [ ] **Strengthen nickname validation**
-  - Already checks `isalnum()` - good
-  - Add: Check for max length BEFORE connection
-  - Add: Better error messages
+- [ ] **8. Create `README.md`**
+    - [ ] Add a setup guide (How to run Server vs Client).
+    - [ ] Add an architecture diagram (Mermaid or ASCII) showing the Hybrid Encryption flow (`AES` for data, `RSA` for keys).
 
-### Server - Cleanup Improvements  
-- [ ] **Use `list()` when iterating dict you're modifying**
-  - In `_cleanup()`, you iterate `connected_users` while others might modify it
-  - Wrap in `list()`: `for user in list(self.connected_users.keys())`
-
-### Client - Reconnection Logic
-- [ ] **Add auto-reconnect on disconnect**
-  - Detect when connection is lost
-  - Attempt to reconnect with exponential backoff
-  - Show reconnection status in UI
-
-### Both - Better Logging
-- [ ] **Replace print statements with logger**
-  - Server has `logger` but still uses `print()` in cleanup
-  - Use appropriate log levels (debug, info, warning, error)
-  - Helps with debugging production issues
+- [ ] **9. Code Quality Sweep**
+    - [ ] Add Type Hints to all functions (e.g., `def connect(self) -> bool:`).
+    - [ ] Add Docstrings to complex classes explaining *why* you chose specific algorithms (e.g., "Using AES-GCM for authenticated encryption").
 
 ---
 
-## 📋 TEXTUAL INTEGRATION CHECKLIST
+## Suggested Workflow
 
-### Textual App Structure
-- [ ] **Create Textual App class**
-  - Accept `Client` instance in `__init__`
-  - Don't try to create client inside Textual
-
-- [ ] **Setup UI in `compose()` method**
-  - Add `RichLog` for messages
-  - Add `Input` widget for typing
-  - Add `Static` widget for user list (optional)
-
-- [ ] **Initialize in `on_mount()` event**
-  - Call `client.start_receiver()`
-  - Start your `process_client_events()` task
-  - Focus the input widget
-
-- [ ] **Handle input in `on_input_submitted()` event**
-  - Get message from `event.value`
-  - Clear input immediately
-  - Call `await client.send_message(message)`
-
-- [ ] **Process events from queue**
-  - Create async loop: `await client.event_queue.get()`
-  - Match on event type: "message", "join", "leave", "error", etc.
-  - Update UI widgets accordingly
-
-- [ ] **Cleanup on exit**
-  - Override `action_quit()` or similar
-  - Call `await client.disconnect()`
-  - Let Textual handle the rest
-
-### Main Function
-- [ ] **Get nickname BEFORE Textual starts**
-  - Use regular `input()` call
-  - Validate it
-  - Don't try to do this inside Textual
-
-- [ ] **Initialize and connect client**
-  - Create Client instance
-  - `await client.connect_to_server()`
-  - `await client.perform_handshake()`
-  - Check return values - exit if failed
-
-- [ ] **Start Textual with connected client**
-  - Pass client to your App class
-  - Call `await app.run_async()`
-
----
-
-## 🎯 RECOMMENDED ORDER OF IMPLEMENTATION
-
-1. **Fix the critical `handle_user_input()` bug** (5 min)
-   - Just change it to `send_message(content: str)`
-   - Remove the `create_task()` call in `start()`
-
-2. **Restructure client initialization** (15 min)
-   - Split `start()` into separate methods
-   - Make connection/handshake return booleans
-
-3. **Create basic Textual app** (30 min)
-   - Just get messages displaying
-   - Don't worry about fancy UI yet
-
-4. **Wire up event processing** (20 min)
-   - Connect queue to UI updates
-   - Handle all event types
-
-5. **Test with 2+ clients** (15 min)
-   - Verify messages work
-   - Check join/leave notifications
-
-6. **Apply server security fixes** (20 min)
-   - Packet size limits
-   - Handshake timeout fix
-
-7. **Polish and add features** (ongoing)
-   - Rate limiting
-   - Better error messages
-   - Reconnection logic
-
----
-
-## 🧪 TESTING CHECKLIST
-
-After each change, verify:
-- [ ] Server starts without errors
-- [ ] Client connects successfully
-- [ ] Can send/receive messages
-- [ ] Multiple clients work
-- [ ] Disconnection is handled
-- [ ] Errors display properly
-- [ ] UI updates correctly
-
----
-
-## 📚 KEY CONCEPTS TO UNDERSTAND
-
-### Event Queue Pattern
-- Client puts events in queue: `await self.event_queue.put(("message", data))`
-- Textual pulls from queue: `event = await client.event_queue.get()`
-- This decouples networking from UI
-
-### Async Task Management
-- Background tasks: `asyncio.create_task(coro())`
-- Wait for completion: `await task`
-- Cancel: `task.cancel()`
-- Textual has special `@work` decorator for tasks
-
-### Textual Event Handlers
-- `on_mount()` - when widget/app is added to DOM
-- `on_input_submitted()` - when user presses Enter
-- `action_quit()` - when user presses Ctrl+C
-- All can be async methods
-
-### Connection Lifecycle
-1. Create client instance (sync)
-2. Connect to server (async)
-3. Perform handshake (async)
-4. Start receiver task (async)
-5. Run UI (async)
-6. Disconnect on exit (async)
-
----
-
-## ⚠️ COMMON PITFALLS TO AVOID
-
-- **DON'T** try to run Textual as a subtask of your client
-- **DON'T** call blocking I/O inside Textual event handlers
-- **DON'T** forget to await async calls
-- **DON'T** modify dicts while iterating them
-- **DON'T** swallow exceptions silently
-- **DO** use `await` for all async operations
-- **DO** handle connection failures gracefully
-- **DO** validate user input before sending to network
-- **DO** update UI from the main thread (via event queue)
-
----
-
-## 🆘 IF YOU GET STUCK
-
-**Error: "Reader not initialized"**
-→ Call `connect_to_server()` before using client
-
-**Error: "Missing 1 required positional argument"**
-→ You forgot to fix `handle_user_input()` signature
-
-**UI not updating**
-→ Check that `process_client_events()` task is running
-
-**Messages not appearing**
-→ Verify events are being put in queue (add debug prints)
-
-**Can't send messages**
-→ Make sure you're calling `send_message()` not the old method
-
-**Type errors with event tuple**
-→ Make sure event format is consistent: `(str, dict)`
+1.  **Start with Task #2 (Fingerprinting).** It is low effort but adds a cool visual element to the UI immediately.
+2.  **Move to Task #1 (Replay Protection).** This is the core "security engineering" task.
+3.  **Finish with Phase 3 (Documentation).** Do not skip this; it is the most important part for your portfolio.
