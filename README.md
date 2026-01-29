@@ -53,18 +53,18 @@ cd beatrice
 pip install textual cryptography
 ```
 
-# To start the server - do this first!
+### To start the server - do this first!
 ```bash
 python server.py
 ```
 
-# To start the main app, open a new terminal window and run the following;
+### To start the main app, open a new terminal window and run the following;
 ```bash
 python beatrice.py
 ```
 *Enter a nickname when prompted. You can open multiple beatrice.py client windows to test messaging between them :)*
 
-🐶 The Story: What's an "Encryption Dog"?
+## 🐶 The Story: What's an "Encryption Dog"?
 
 Beatrice is the name of my wife and I's Jack Russell puppy. She's wonderful.
 
