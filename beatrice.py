@@ -311,6 +311,7 @@ class Beatrice(App):
 
             chat_log.scroll_end(animate=False)
 
+    # TODO: This currently turns all users to away even if they aren't. Will fix
     async def update_online_users_display(self):
         """Update the display of online users."""
         # Get the usernames from client
