@@ -583,13 +583,12 @@ class Client:
         # create empty list to store usernames
         online_list = []
         # Go through every username in user_public_keys
+        online_list.append(f"Me ({self.nickname})")
         for user in self.user_public_keys:
             # If the current user is not the same as the nickname
             if user != self.nickname:
                 online_list.append(user)
             # If the current user is the same as the nickname, add "Me" to the list
-            else:
-                online_list.append("Me")
         return set(online_list)
 
 

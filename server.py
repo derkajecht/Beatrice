@@ -5,6 +5,7 @@ import asyncio
 import json
 import random
 import logging
+from datetime import datetime
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class BeatriceServer:
         #        "key": "-----BEGIN PUBLIC KEY..."
         #    },
         # }
-        self.connected_users: dict[str, dict[str, asyncio.StreamWriter | str]] = {}
+        self.connected_users = {}
 
     async def _receive_packet(self, reader) -> None | dict[str, str]:
         try:
@@ -65,6 +66,8 @@ class BeatriceServer:
             pass
 
     async def start_server(self):
+        asyncio.create_task(self._inactivity_check())
+
         server = await asyncio.start_server(self.handle_client, self.host, self.port)
 
         async with server:
@@ -161,6 +164,8 @@ class BeatriceServer:
                         {  # Store this in the connected_users dict
                             "writer": writer,
                             "key": _key,
+                            "last_activity": datetime.now(),
+                            "status": "active",
                         }
                     )
                     self.latest_nickname = final_nickname
@@ -268,6 +273,7 @@ class BeatriceServer:
             if message_packet is None:
                 continue
             elif message_packet.get("t") == "M":
+                self.connected_users[nickname]["last_activity"] = datetime.now()
                 recipient = message_packet.get("r")
                 message_packet["s"] = nickname
 
@@ -347,6 +353,21 @@ class BeatriceServer:
             await writer_to_close.wait_closed()
         except Exception:
             pass
+
+    def _inactivity_check(self):
+        while True:
+            await asyncio.sleep(10)
+
+            timeout = 300  # 5 min
+            now = datetime.now()
+
+            for nickname in list(self.connected_users.keys()):
+                last_active = self.connected_users[nickname]["last_actvity"]
+                elapsed = (now - last_active).total_seconds()
+
+                if elapsed > timeout:
+
+
 
 
 # --- Execution ---

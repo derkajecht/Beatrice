@@ -5,7 +5,7 @@
 }
 
 .nickname_input {
-    width: 30%; /* Or specific width like 50 */
+    width: 50%; /* Or specific width like 50 */
 }
 
 /* --- UTILITY --- */

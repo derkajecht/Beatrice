@@ -1,3 +1,5 @@
+import asyncio
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll, Container
 from textual.widgets import (
@@ -105,7 +107,17 @@ class Beatrice(App):
 
         self.online_users = None
 
+        # await self.update_online_users_display()
+
+        self.inactivity_timer = datetime.now()
+        self.set_interval(5, self.update_online_users_display)
+
     async def on_input_submitted(self, event: Input.Submitted):
+
+        # Reset inactivity_timer on message input
+        # self.reset_inactivity_timer()
+
+        self.inactivity_timer = datetime.now()
 
         chat_log = self.query_one("#chat_log")
         online_user_log = self.query_one("#online_user_log")
@@ -185,7 +197,15 @@ class Beatrice(App):
             event.input.value = ""
         # ---/
 
-        await self.update_online_users_display()
+        # await self.update_online_users_display()
+
+    def on_key(self, event: events.Key):
+        # Reset inactivity_timer on any key input
+        self.inactivity_timer = datetime.now()
+
+    def on_click(self, event: events.Click):
+        # Reset inactivity_timer on any key input
+        self.inactivity_timer = datetime.now()
 
     # Method to get things from the event queue and do something with them depending on what it is.
     async def process_events(self):
@@ -251,7 +271,7 @@ class Beatrice(App):
                         )
                     )
 
-                    await self.update_online_users_display()
+                    # await self.update_online_users_display()
 
                 # if the event type is dir notify the users how many people are connected
                 elif event_type == "dir":
@@ -265,7 +285,7 @@ class Beatrice(App):
                         )
                     )
 
-                    await self.update_online_users_display()
+                    # await self.update_online_users_display()
 
                 # if event type is leave packet notify the users who left the chat
                 elif event_type == "leave_packet":
@@ -279,7 +299,7 @@ class Beatrice(App):
                         )
                     )
 
-                    await self.update_online_users_display()
+                    # await self.update_online_users_display()
 
                 elif event_type == "self_message_error":
                     chat_log = self.query_one("#chat_log")
@@ -302,9 +322,32 @@ class Beatrice(App):
         # Clear existing items
         online_list.clear()
 
+        # Timeout
+        timeout = 300  # 5 min
+        elapsed = (datetime.now() - self.inactivity_timer).total_seconds()
+
         # Add new items
         for user in users:
-            online_list.append(ListItem(Label(f"🟢 {user}")))
+            if elapsed > timeout:
+                self.notify(
+                    "You've been logged out for inactivity.", severity="warning"
+                )
+                online_list.append(ListItem(Label(f"🟠 {user}")))
+            else:
+                online_list.append(ListItem(Label(f"🟢 {user}")))
+
+    # def handle_inactivity_timeout(self):
+    #     """Called when the user has been inactive for 5 mins"""
+    #     return True
+    #
+    #     # # Handle the client disconnect and call the cleanup function
+    #     # if self.client:
+    #     #     asyncio.create_task(self.client._cleanup())
+    #     # self.exit()
+
+    # def reset_inactivity_timer(self):
+    #     if hasattr(self, "inactivity_timer"):
+    #         self.inactivity_timer.reset()
 
 
 if __name__ == "__main__":
