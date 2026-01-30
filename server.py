@@ -1,11 +1,9 @@
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
 import asyncio
 import json
 import random
 import logging
 from datetime import datetime
+from cryptography.hazmat.primitives import serialization
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -32,40 +30,8 @@ class BeatriceServer:
         # }
         self.connected_users = {}
 
-    async def _receive_packet(self, reader) -> None | dict[str, str]:
-        try:
-            message: str = await reader.readline()
-            if (
-                message == b""
-            ):  # if an empty string is received, this means the client has disconnected.
-                raise Exception("Client has disconnected. Connection will be closed.")
-            elif not message or message == b"\n":
-                return None  # if no message is received or an empty message is received, do nothing
-
-            packet = json.loads(
-                message.decode("utf-8")
-            )  # decrypt the utf8 message into JSON packet if its valid json
-            return packet
-        except json.JSONDecodeError as e:  # json error if there is an invalid json
-            logger.error(f"Invalid JSON {e}. Message will be skipped")
-            pass
-
-    async def _send_packet(self, writer, packet):
-        """
-        1. Encodes the packet to JSON bytes (with newline).
-        2. Writes it to the specific writer.
-        3. Drains the writer to ensure it sent.
-        Safety: Wrap in try/except to ignore broken pipes.
-        """
-        try:
-            writer.write(
-                (json.dumps(packet) + "\n").encode("utf-8")
-            )  # Send the error packet
-            await writer.drain()
-        except Exception:  # If an exception occurs
-            pass
-
     async def start_server(self):
+        # Start tha bg task that checks for inactive users
         asyncio.create_task(self._inactivity_check())
 
         server = await asyncio.start_server(self.handle_client, self.host, self.port)
@@ -75,7 +41,7 @@ class BeatriceServer:
 
     async def handle_client(self, reader, writer):
         """
-        This will handle most of the server side logic and make sure its called in the right order.
+        This will handle most of the server side logic and make sure everything is called in the right order.
         """
         # 1. Perform handshake
         nickname = await self._handshake(reader, writer)
@@ -96,6 +62,41 @@ class BeatriceServer:
             # 4. Cleanup on disconnect
             await self._cleanup(nickname)
 
+    async def _receive_packet(self, reader) -> None | dict[str, str]:
+        try:
+            message: str = await reader.readline()
+            if (
+                message == b""
+            ):  # if an empty string is received, this means the client has disconnected.
+                raise Exception("Client has disconnected. Connection will be closed.")
+            if message == b"\n":
+                return None  # if no message is received or an empty message is received, do nothing
+
+            # decrypt the utf8 message into JSON packet if its valid json
+            packet = json.loads(message.decode("utf-8"))
+            return packet
+        except json.JSONDecodeError as e:  # json error if there is an invalid json
+            logger.error(f"Invalid JSON {e}. Message will be skipped")
+            return None
+        except Exception as e:
+            logger.error(f"Receive error {e}")
+            return None
+
+    async def _send_packet(self, writer, packet):
+        """
+        1. Encodes the packet to JSON bytes (with newline).
+        2. Writes it to the specific writer.
+        3. Drains the writer to ensure it sent.
+        Safety: Wrap in try/except to ignore broken pipes.
+        """
+        try:
+            writer.write((json.dumps(packet) + "\n").encode("utf-8"))
+            await writer.drain()
+
+        # If sending fails, the socket is likely closed
+        except Exception:
+            pass
+
     async def _handshake(self, reader, writer):
         """
         Read Line: Get the first packet.
@@ -113,8 +114,9 @@ class BeatriceServer:
         while True:
             try:
                 packet = await asyncio.wait_for(self._receive_packet(reader), timeout=5)
-            except Exception:
-                break
+            except asyncio.TimeoutError:
+                logger.warning("Handshake timed out")
+                return None
 
             if packet is None:
                 continue
@@ -149,7 +151,7 @@ class BeatriceServer:
                     serialization.load_pem_public_key(_key.encode("utf-8"))
 
                 # If it does not pass, ValueError is raised, indicating that the public key is invalid.
-                except (ValueError, TypeError):
+                except Exception:
                     error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
                     await self._send_packet(writer, {"t": "ERR", "c": error_msg})
                     return None
@@ -195,15 +197,13 @@ class BeatriceServer:
 
         # Create full list of current connected users
         current_user_list = []
-        for user in self.connected_users:
+
+        for user, data in self.connected_users.items():
             # send the dir_packet to the new user
             if user != new_nickname:
-                current_user_list.append(
-                    {"n": user, "k": self.connected_users[user]["key"]}
-                )
+                current_user_list.append({"n": user, "k": data["key"]})
 
         # --- Send current connected user info to the newly connected user ---
-
         # dir_packet structure for reference
         # {
         #   "t": "DIR",            // Type: Directory
@@ -244,10 +244,9 @@ class BeatriceServer:
         }
 
         # Send the join packet to all users except for the most recently joined user
-        for user in self.connected_users:
+        for user, data in self.connected_users.items():
             if user != new_nickname:
-                target_writer = self.connected_users[user]["writer"]
-                await self._send_packet(target_writer, join_packet)
+                await self._send_packet(data["writer"], join_packet)
 
     async def _message_loop(self, reader, nickname):
         """
@@ -323,6 +322,8 @@ class BeatriceServer:
         if nickname not in self.connected_users:
             return
 
+        logger.info(f"{nickname} disconnecting...")
+
         # Get the writer of the user we need to remove
         writer_to_close = self.connected_users[nickname]["writer"]
 
@@ -354,7 +355,7 @@ class BeatriceServer:
         except Exception:
             pass
 
-    def _inactivity_check(self):
+    async def _inactivity_check(self):
         while True:
             await asyncio.sleep(10)
 
@@ -366,15 +367,14 @@ class BeatriceServer:
                 elapsed = (now - last_active).total_seconds()
 
                 if elapsed > timeout:
-
-
+                    pass
 
 
 # --- Execution ---
 if __name__ == "__main__":
 
     # Pass host and port to __init__
-    server = BeatriceServer("127.0.0.1", 55556)
+    server = BeatriceServer("0.0.0.0", 55556)
 
     # Run the main async entry point
     try:

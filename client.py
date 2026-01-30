@@ -1,20 +1,20 @@
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
-from cryptography.exceptions import InvalidTag
-from typing import Optional, Union, Dict, List, Tuple, Any
 import os
 import logging
 import base64
 import asyncio
-import sys
 import json
 import hashlib
-from server import BeatriceServer
 
+from typing import Union, List, Tuple, Any, Optional
+
+# Cryptography imports
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
+
+# Type definitions
 Event = Union[
     Tuple[str, str, str],  # ("message", sender, content)
     Tuple[str, str],  # ("error", message)
@@ -33,31 +33,24 @@ MAX_NICKNAME_LENGTH = 20
 
 class Client:
     def __init__(self, host: str, port: int, nickname: str) -> None:
-        """
-        Inits the chat client with RSA key pair and connection settings.
-
-        Generates:
-        - AES key to encrypt messages
-        - 2048-bit RSA key pair for encryption of the AES key
-        # Optimization: Hybrid encryption (RSA + AES) used to minimize computational overhead of asymmetric crypto.
-        """
+        # /--- Store host & port, set nickname
+        self.host: str = host
+        self.port: int = port
+        self.nickname: str = nickname
+        # ---/
 
         # /--- Aysncio shtuff ---
-        self._reader: asyncio.StreamReader | None = None
-        self.writer: asyncio.StreamWriter | None = None
+        self._reader: Optional[asyncio.StreamReader] = None
+        self.writer: Optional[asyncio.StreamWriter] = None
 
-        # This is so background tasks have a place to put data
+        # Queue for sending events to the UI
         self.event_queue: asyncio.Queue[Event] = asyncio.Queue()
         # ---/
 
-        # /--- Store host & port
-        self.host: str = host
-        self.port: int = port
-        # ---/
+        # Init connected status as false since we are not connected yet
+        self.connected: bool = False
 
-        # Take the nickname input and store it
-        self.nickname: str = nickname
-
+        # --- CRYPTO SETUP ---
         # /--- Public and private key generation
         self.private_key: RSAPrivateKey = rsa.generate_private_key(
             public_exponent=65537, key_size=2048, backend=default_backend()
@@ -76,9 +69,6 @@ class Client:
         # Store other users public keys
         self.user_public_keys: dict[str, RSAPublicKey] = {}
 
-        # Init connected status as false since we are not connected yet
-        self.connected: bool = False
-
         # /--- Init handshake packet data
         self.handshake_packet: dict[str, str] = {
             "t": "H",
@@ -86,6 +76,71 @@ class Client:
             "k": self.public_key_str,
         }
         # ---/
+
+    @property
+    def reader(self) -> asyncio.StreamReader:
+        """
+        Property to safely access the asyncio StreamReader.
+
+        Returns:
+            asyncio.StreamReader: The connection reader stream
+
+        Raises:
+            ValueError: If reader hasn't been initialized yet
+        """
+        if self._reader is None:
+            raise ValueError("reader attribute not set")
+        return self._reader
+
+    @reader.setter
+    def reader(self, value: asyncio.StreamReader) -> None:
+        self._reader = value
+
+    async def connect_to_server(self, host: str, port: int):
+        """
+        Establish TCP connection to the chat server. - could use udp down the line for fun?
+
+        Creates asyncio Reader and Writer for bidirectional
+        communication with the server.
+
+        Args:
+            host: Server IP address or hostname
+            port: Server port number
+
+        Raises:
+            ConnectionError: If unable to connect to server
+
+        Time Complexity: O(1) - single connection attempt
+        """
+        try:
+            self._reader, self.writer = await asyncio.open_connection(
+                host, port
+            )  # Import host & port from server side logic
+        except ConnectionRefusedError:
+            logger.error(f"Could not connect to host and port.")
+            raise Exception("Unable to connect to host and port.")
+
+    # helper method to avoid re-writing the same lines of code over and over
+    async def _send_packet(self, packet: dict[str, str]):
+        """
+        1. Encodes the packet to JSON bytes (with newline).
+        2. Writes it to the specific writer.
+        3. Drains the writer to ensure it sent.
+        Safety: Wrap in try/except to ignore broken pipes.
+        """
+        try:
+            # Encodes the packet to bytes and writes it to the writer, followed by a newline.
+            assert self.writer is not None
+            self.writer.write((json.dumps(packet) + "\n").encode("utf-8"))
+
+            # Drains the writer's buffer, ensuring that all data has been sent.
+            assert self.writer is not None
+            await self.writer.drain()
+
+        # If an exception occurs
+        except Exception as e:
+            logger.warning(f"Error sending packet: {e}")
+            return
 
     # helper method to avoid re-writing the same lines of code over and over
     async def _receive_packet(self) -> dict[str, Any] | None:
@@ -124,27 +179,21 @@ class Client:
             logger.warning(f"Error receiving packet: {e}")
             return
 
-    # helper method to avoid re-writing the same lines of code over and over
-    async def _send_packet(self, packet: dict[str, str]):
+    def store_user_public_key(self, nickname: str, public_key_str: str):
         """
-        1. Encodes the packet to JSON bytes (with newline).
-        2. Writes it to the specific writer.
-        3. Drains the writer to ensure it sent.
-        Safety: Wrap in try/except to ignore broken pipes.
+        Stores the given user's public key in a dictionary with the nickname as the key. This allows for quick lookup of other users' public keys when sending encrypted messages.
+
+        parameters:
+        - nickname (str): The nickname associated with the user whose public key is being stored.
+
         """
         try:
-            # Encodes the packet to bytes and writes it to the writer, followed by a newline.
-            assert self.writer is not None
-            self.writer.write((json.dumps(packet) + "\n").encode("utf-8"))
-
-            # Drains the writer's buffer, ensuring that all data has been sent.
-            assert self.writer is not None
-            await self.writer.drain()
-
-        # If an exception occurs
+            public_key = serialization.load_pem_public_key(
+                public_key_str.encode("utf-8"), backend=default_backend()
+            )
+            self.user_public_keys[nickname] = public_key
         except Exception as e:
-            logger.warning(f"Error sending packet: {e}")
-            return
+            logger.error(f"Error storing public key for {nickname}: {e}")
 
     def get_fingerprint(self, nickname) -> str:
         """
@@ -170,69 +219,9 @@ class Client:
         # return the first 4 characters and last 4 characters of sha256 hash
         return f"{sha[:4]}:{sha[4:8]}"
 
-    # def online_user_request(self):
-    #     online_list = []
-    #     for user in self.connected
-
-    @property
-    def reader(self) -> asyncio.StreamReader:
-        """
-        Property to safely access the asyncio StreamReader.
-
-        Returns:
-            asyncio.StreamReader: The connection reader stream
-
-        Raises:
-            ValueError: If reader hasn't been initialized yet
-
-        """
-        if self._reader is None:
-            raise ValueError("reader attribute not set")
-        return self._reader
-
     @reader.setter
     def reader(self, value: asyncio.StreamReader) -> None:
         self._reader = value
-
-    def store_user_public_key(self, nickname: str, public_key_str: str):
-        """
-        Stores the given user's public key in a dictionary with the nickname as the key. This allows for quick lookup of other users' public keys when sending encrypted messages.
-
-        parameters:
-        - nickname (str): The nickname associated with the user whose public key is being stored.
-
-        """
-        try:
-            public_key = serialization.load_pem_public_key(
-                public_key_str.encode("utf-8"), backend=default_backend()
-            )
-            self.user_public_keys[nickname] = public_key
-        except Exception as e:
-            logger.error(f"Error storing public key for {nickname}: {e}")
-
-    async def connect_to_server(self, host: str, port: int):
-        """
-        Establish TCP connection to the chat server. - could use udp down the line for fun?
-
-        Creates asyncio Reader and Writer for bidirectional
-        communication with the server.
-
-        Args:
-            host: Server IP address or hostname
-            port: Server port number
-
-        Raises:
-            ConnectionError: If unable to connect to server
-
-        Time Complexity: O(1) - single connection attempt
-        """
-        try:
-            self._reader, self.writer = await asyncio.open_connection(
-                host, port
-            )  # Import host & port from server side logic
-        except ConnectionRefusedError:
-            logger.error(f"Could not connect to host and port.")
-            raise Exception("Unable to connect to host and port.")
 
     async def check_handshake(self) -> bool:
         """
@@ -295,22 +284,6 @@ class Client:
 
         return True
 
-    # async def initialise(self):
-    #     """
-    #     a method to initialise the clients connection to the server and to initiate the handshake. This can't be called within the init as that is not async
-    #     """
-    #     await self.connect_to_server(self.host, self.port)
-    #     await self.check_handshake()
-
-    async def _cleanup(self) -> None:
-        """
-        Properly close connections and clean up resources.
-        """
-        if self.writer:
-            self.writer.close()
-            await self.writer.wait_closed()
-        self.connected = False
-
     async def receive_messages(self) -> None:
         """
         Continuously listens for packets from the server and handles them.
@@ -329,6 +302,7 @@ class Client:
             # Get the type of packet
             packet_type = packet.get("t")
 
+            # TODO: Could refactor this by splitting the decryption part into its own method, might look cleaner
             # --- MESSAGE PACKET ---
             if packet_type == "M":
                 # Handle message
@@ -564,12 +538,12 @@ class Client:
 
                 await self._send_packet(message_packet)
 
-                await self.event_queue.put(
-                    ("my_message", {"sender": "Me: ", "content": content})
-                )
-
             except Exception as e:
                 logger.error(f"Failed to send to {target_nick}: {e}")
+
+        await self.event_queue.put(
+            ("my_message", {"sender": "Me: ", "content": content})
+        )
 
         if recipient == "ALL":
             await self.event_queue.put(
@@ -590,6 +564,15 @@ class Client:
                 online_list.append(user)
             # If the current user is the same as the nickname, add "Me" to the list
         return set(online_list)
+
+    async def _cleanup(self) -> None:
+        """
+        Properly close connections and clean up resources.
+        """
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
+        self.connected = False
 
 
 # # --- Execution ---

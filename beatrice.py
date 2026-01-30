@@ -1,39 +1,27 @@
 import asyncio
-from textual import events
+from datetime import datetime
+from textual import events, validation
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll, Container
 from textual.widgets import (
-    Header,
     ListView,
-    Static,
     Input,
-    Button,
-    Footer,
-    LoadingIndicator,
     Label,
     ListItem,
+    Static,
 )
-import textual.validation
+
+# import client class
 from client import Client
-from server import BeatriceServer
-from datetime import datetime
+
+# Constants
+SERVER_HOST = "localhost"
+SERVER_PORT = 55556
 
 
 # Nickname must be between 3 and 20 characters long
 def validate_nickname(value: str) -> bool:
     return 3 <= len(value) <= 20 and value.isalnum()
-
-
-# Class that gets the connected_users list from the server and displays it inside its own section on the rh side of the screen
-class GetOnlineUsers:
-    """Populate the rh sidebar with current online users"""
-
-    def __init__(self, client):
-        self.client = client
-
-    async def get_online_users(self):
-        if self.client is not None:
-            await self.client.display_connected_users()
 
 
 class TimestampLabel(Label):
@@ -69,12 +57,26 @@ class Beatrice(App):
     # timestamp = datetime.now().strftime("%d-%m-%y %H:%M:%S")
 
     def compose(self) -> ComposeResult:
-        # Nickname input field
+        yield Container(
+            Label(
+                """
+
+█████▄ ██████ ▄████▄ ██████ █████▄  ██ ▄█████ ██████
+██▄▄██ ██▄▄   ██▄▄██   ██   ██▄▄██▄ ██ ██     ██▄▄
+██▄▄█▀ ██▄▄▄▄ ██  ██   ██   ██   ██ ██ ▀█████ ██▄▄▄▄
+----------------------------------------------------
+""",
+                id="login_title_text",
+            ),
+            id="login_title_container",
+        )
+
+        # Nickname input/login field
         yield Container(
             Input(
-                placeholder="Enter your nickname",
+                placeholder="Enter your nickname...",
                 validators=[
-                    textual.validation.Function(
+                    validation.Function(
                         validate_nickname,
                         "Nickname must be between 3 and 20 characters long and contain only letters or nummers.",
                     )
@@ -83,6 +85,28 @@ class Beatrice(App):
                 classes="nickname_input",
             ),
             id="login_screen",
+        )
+
+        yield Container(
+            Label("""
+        ⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+        ⠀⠀⢀⡤⠞⠋⠉⠀⠀⠀⠀⠀⠀⠀⠉⠙⠳⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+        ⠀⣠⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡆⠀⠀⠀⠀⠀⠀⠀⠀
+        ⢠⠇⠀⢰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⡄⠀⢸⡀⠀⠀⠀⠀⠀⠀⠀
+        ⢸⠀⠀⢸⠀⠀⢰⣶⡀⠀⠀⠀⢠⣶⡀⠀⠀⡇⠀⢸⠂⠀⠀⠀⠀⠀⠀⠀
+        ⠈⢧⣀⢸⡄⠀⠀⠉⠀⠀⠀⠀⠀⠉⠀⠀⢠⡇⣠⡞⠁⠀⠀⠀⠀⠀⠀⠀
+        ⠀⠀⠉⠙⣇⠀ ⠀⠀⢶⣶⣶⠀ ⠀⠀⣾⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
+        ⠀⠀⠀⠀⠘⢦⡀⠀⠀⠀⢸⠀⠀⠀⠀⢀⣼⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+        ⠀⠀⠀⠀⢠⠞⠓⠤⣤⣀⣀⣠⣤⠴⠚⠉⠑⠲⢤⡀⠀⠀⠀⠀⠀⠀⠀⠀
+        ⠀⠀⠀⠀⢸⠀⠀⣀⣠⣀⣀⣠⣀⡀⠀⠀⠀⠀⠀⠈⠳⣄⠀⠀⠀⠀⠀⠀
+        ⠀⠀⠀⠀⢸⠀⠰⡇⠀⠈⠁⠀⠈⡧⠀⠀⠀⠀⠀⠀⠀⠈⢦⠀⠀⢠⠖⡆
+        ⠀⠀⠀⠀⢸⠀⠀⠑⢦⡀⠀⣠⠞⠁⠀⢸⠀⠀⠀⠀⠀⠀⠈⣷⠞⠋⢠⠇
+        ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠙⡞⠁⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⢹⢀⡴⠋⠀
+        ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⡇⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⡞⠉⠀⠀⠀
+        ⠀⠀⠀⠀⢸⡀⠀⠀⠀⢠⣧⠀⠀⠀⠀⣸⡀⠀⠀⠀⠀⣠⠞⠁⠀⠀⠀⠀
+        ⠀⠀⠀⠀⠈⠳⠦⠤⠴⠛⠈⠓⠤⠤⠞⠁⠉⠛⠒⠚⠋⠁⠀⠀⠀⠀⠀⠀
+            """),
+            id="ascii_dog",
         )
 
         # Chat display area
@@ -101,16 +125,10 @@ class Beatrice(App):
         self.processor_task = None
         self.receiver_task = None
 
-        self.chat_text = ""
-
         self.nickname_input = self.query_one("#nickname_input")
 
-        self.online_users = None
-
-        # await self.update_online_users_display()
-
+        self.set_interval(2, self.update_online_users_display)
         self.inactivity_timer = datetime.now()
-        self.set_interval(5, self.update_online_users_display)
 
     async def on_input_submitted(self, event: Input.Submitted):
 
@@ -140,6 +158,7 @@ class Beatrice(App):
 
                     # remove the input field from the screen
                     self.query_one("#nickname_input").remove()
+                    self.query_one("#login_title_container").remove()
 
                     # /-- Make the chat log and online user log appear only after a valid nickname is inputted
                     chat_log = self.query_one("#chat_log")
@@ -152,7 +171,7 @@ class Beatrice(App):
                     await chat_log.mount(
                         Label(
                             f"Welcome to Beatrice, {self.nickname}!",
-                            classes="system_message",
+                            classes="startup_message",
                         )
                     )
 
@@ -266,7 +285,7 @@ class Beatrice(App):
                     chat_log = self.query_one("#chat_log")
                     await chat_log.mount(
                         Container(
-                            Label(f"{content}", classes="system_message"),
+                            Label(f"{content}", classes="join_message"),
                             classes="join_packet",
                         )
                     )
@@ -280,7 +299,7 @@ class Beatrice(App):
                     chat_log = self.query_one("#chat_log")
                     await chat_log.mount(
                         Container(
-                            Label(f"{content}", classes="system_message"),
+                            Label(f"{content}", classes="dir_message"),
                             classes="dir_packet",
                         )
                     )
@@ -294,7 +313,7 @@ class Beatrice(App):
                     chat_log = self.query_one("#chat_log")
                     await chat_log.mount(
                         Container(
-                            Label(f"{content}", classes="system_message"),
+                            Label(f"{content}", classes="leave_message"),
                             classes="leave_packet",
                         )
                     )
@@ -311,11 +330,18 @@ class Beatrice(App):
 
             chat_log.scroll_end(animate=False)
 
-    # TODO: This currently turns all users to away even if they aren't. Will fix
+    # TODO: This currently turns all users to away even if they aren't. Probs make sense for the server to handle this. Will add...
     async def update_online_users_display(self):
         """Update the display of online users."""
+        if not self.client:
+            return
+
         # Get the usernames from client
-        users = await self.client.display_connected_users()
+        users = [
+            user
+            for user in await self.client.display_connected_users()
+            if user != self.nickname
+        ]
 
         # Get the online list from the DOM
         online_list = self.query_one("#online_list")
@@ -330,10 +356,13 @@ class Beatrice(App):
         # Add new items
         for user in users:
             if elapsed > timeout:
-                self.notify(
-                    "You've been logged out for inactivity.", severity="warning"
-                )
+                # self.notify(
+                #     "You've been logged out for inactivity.",
+                #     severity="warning",
+                #     timeout=15,
+                # )
                 online_list.append(ListItem(Label(f"🟠 {user}")))
+
             else:
                 online_list.append(ListItem(Label(f"🟢 {user}")))
 
