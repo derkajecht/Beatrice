@@ -11,6 +11,11 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+# Contstants
+NICKNAME_SUFFIX_MIN = 100
+NICKNAME_SUFFIX_MAX = 999
+HANDSHAKE_TIMEOUT = 5
+
 
 class BeatriceServer:
     def __init__(self, host: str, port: int) -> None:
@@ -30,11 +35,15 @@ class BeatriceServer:
         # }
         self.connected_users = {}
 
+        self._users_lock = asyncio.Lock()
+
     async def start_server(self):
         # Start tha bg task that checks for inactive users
-        asyncio.create_task(self._inactivity_check())
+        # asyncio.create_task(self._inactivity_check())
 
-        server = await asyncio.start_server(self.handle_client, self.host, self.port)
+        server = await asyncio.start_server(
+            self.handle_client, self.host, self.port, reuse_address=True
+        )
 
         async with server:
             await server.serve_forever()
@@ -58,28 +67,34 @@ class BeatriceServer:
             # 3. Init message loop
             await self._message_loop(reader, nickname)
 
+        except Exception as e:
+            logger.error(f"Error: {e}")
+
         finally:
             # 4. Cleanup on disconnect
             await self._cleanup(nickname)
 
     async def _receive_packet(self, reader) -> None | dict[str, str]:
+        """Method that listens for packets and correctly stops the server if the client leaves"""
         try:
-            message: str = await reader.readline()
-            if (
-                message == b""
-            ):  # if an empty string is received, this means the client has disconnected.
-                raise Exception("Client has disconnected. Connection will be closed.")
-            if message == b"\n":
-                return None  # if no message is received or an empty message is received, do nothing
+            message: bytes = await reader.readline()
+        except Exception as e:
+            logger.error(f"Socket read error: {e}")
+            raise e  # Re-raise so the loop knows to stop
 
-            # decrypt the utf8 message into JSON packet if its valid json
+        if message == b"":
+            # EOF received. Raise exception to break the loop in the caller.
+            raise ConnectionResetError("Client disconnected")
+
+        if message == b"\n":
+            await asyncio.sleep(0.1)
+            return None
+
+        try:
             packet = json.loads(message.decode("utf-8"))
             return packet
-        except json.JSONDecodeError as e:  # json error if there is an invalid json
-            logger.error(f"Invalid JSON {e}. Message will be skipped")
-            return None
-        except Exception as e:
-            logger.error(f"Receive error {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON {e}")
             return None
 
     async def _send_packet(self, writer, packet):
@@ -94,8 +109,8 @@ class BeatriceServer:
             await writer.drain()
 
         # If sending fails, the socket is likely closed
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error: {e}")
 
     async def _handshake(self, reader, writer):
         """
@@ -113,15 +128,18 @@ class BeatriceServer:
         """
         while True:
             try:
-                packet = await asyncio.wait_for(self._receive_packet(reader), timeout=5)
+                packet = await asyncio.wait_for(
+                    self._receive_packet(reader), timeout=HANDSHAKE_TIMEOUT
+                )
             except asyncio.TimeoutError:
                 logger.warning("Handshake timed out")
                 return None
 
             if packet is None:
+                await asyncio.sleep(0.1)
                 continue
-            elif packet.get("t") == "H":
 
+            elif packet.get("t") == "H":
                 # Get the values from the decoded json packet
                 _nickname = packet.get("n")  # Nickname
                 _key = packet.get("k")  # Public key
@@ -146,33 +164,43 @@ class BeatriceServer:
                     await self._send_packet(writer, err_packet)
                     return None
 
+                loop = asyncio.get_running_loop()
                 try:
                     # If this passes, the key is mathematically valid
-                    serialization.load_pem_public_key(_key.encode("utf-8"))
+                    await loop.run_in_executor(
+                        None,
+                        serialization.load_pem_public_key,
+                        _key.encode("utf-8"),
+                    )
 
                 # If it does not pass, ValueError is raised, indicating that the public key is invalid.
-                except Exception:
+                except Exception as e:
                     error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
                     await self._send_packet(writer, {"t": "ERR", "c": error_msg})
+                    logger.error(f"Error (likely an invalid public key): {e}")
                     return None
 
                 try:
                     # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
                     final_nickname = _nickname
                     if final_nickname in self.connected_users:
-                        suffix = random.randint(100, 999)
+                        suffix = random.randint(
+                            NICKNAME_SUFFIX_MIN, NICKNAME_SUFFIX_MAX
+                        )
                         final_nickname = f"{_nickname}#{suffix}"
-                    self.connected_users[final_nickname] = (
-                        {  # Store this in the connected_users dict
-                            "writer": writer,
-                            "key": _key,
-                            "last_activity": datetime.now(),
-                            "status": "active",
-                        }
-                    )
+                    async with self._users_lock:
+                        self.connected_users[final_nickname] = (
+                            {  # Store this in the connected_users dict
+                                "writer": writer,
+                                "key": _key,
+                                "last_activity": datetime.now(),
+                                "status": "active",
+                            }
+                        )
                     self.latest_nickname = final_nickname
                     return final_nickname
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Nickname already in use: {e}")
                     return None
 
             else:  # If the packet type doesn't begin with "H" which indicates its a handshake request.
@@ -198,10 +226,11 @@ class BeatriceServer:
         # Create full list of current connected users
         current_user_list = []
 
-        for user, data in self.connected_users.items():
-            # send the dir_packet to the new user
-            if user != new_nickname:
-                current_user_list.append({"n": user, "k": data["key"]})
+        async with self._users_lock:
+            for user, data in self.connected_users.items():
+                # send the dir_packet to the new user
+                if user != new_nickname:
+                    current_user_list.append({"n": user, "k": data["key"]})
 
         # --- Send current connected user info to the newly connected user ---
         # dir_packet structure for reference
@@ -244,9 +273,10 @@ class BeatriceServer:
         }
 
         # Send the join packet to all users except for the most recently joined user
-        for user, data in self.connected_users.items():
-            if user != new_nickname:
-                await self._send_packet(data["writer"], join_packet)
+        async with self._users_lock:
+            for user, data in self.connected_users.items():
+                if user != new_nickname:
+                    await asyncio.gather(self._send_packet(data["writer"], join_packet))
 
     async def _message_loop(self, reader, nickname):
         """
@@ -271,41 +301,31 @@ class BeatriceServer:
 
             if message_packet is None:
                 continue
+
             elif message_packet.get("t") == "M":
-                self.connected_users[nickname]["last_activity"] = datetime.now()
+                async with self._users_lock:
+                    self.connected_users[nickname]["last_activity"] = datetime.now()
                 recipient = message_packet.get("r")
                 message_packet["s"] = nickname
 
-                if recipient == "ALL":
-                    for user in self.connected_users:
-                        if user != nickname:
-                            try:
-                                asyncio.create_task(
-                                    self._send_packet(
-                                        self.connected_users[user].get("writer"),
-                                        message_packet,
-                                    )
-                                )  # send to all
-                            except:
-                                pass
+                if recipient in self.connected_users:
+                    if recipient != nickname:
+                        try:
+                            await self._send_packet(
+                                self.connected_users[recipient].get("writer"),
+                                message_packet,
+                            )  # send to all
+                        except Exception as e:
+                            logger.error(f"Error: {e}")
+                            pass
                 else:
-                    if recipient in self.connected_users:
-                        if recipient != nickname:
-                            try:
-                                await self._send_packet(
-                                    self.connected_users[recipient].get("writer"),
-                                    message_packet,
-                                )  # send to all
-                            except:
-                                pass
-                    else:
-                        error_packet = {
-                            "t": "ERR",
-                            "c": f"User '{recipient}' not found or disconnected",
-                        }
-                        await self._send_packet(
-                            self.connected_users[nickname]["writer"], error_packet
-                        )
+                    error_packet = {
+                        "t": "ERR",
+                        "c": f"User '{recipient}' not found or disconnected",
+                    }
+                    await self._send_packet(
+                        self.connected_users[nickname]["writer"], error_packet
+                    )
 
     async def _cleanup(self, nickname):
         """
@@ -328,8 +348,9 @@ class BeatriceServer:
         writer_to_close = self.connected_users[nickname]["writer"]
 
         # Remove user from the connected_user list
-        del self.connected_users[nickname]
-        print(f"----- Server: {nickname} has disconnected -----")
+        async with self._users_lock:
+            del self.connected_users[nickname]
+            print(f"----- Server: {nickname} has disconnected -----")
         # Is this needed for tui or could we use a logging system for the tui to handle???
 
         # Notify other users by sending the leave packet
@@ -341,33 +362,37 @@ class BeatriceServer:
         leave_packet = {"t": "L", "n": nickname}  # Type: Leave  # Who is leaving
 
         # Iterate through the connected user list and send them the leave packet
-        for user in self.connected_users:
-            try:
-                target_writer = self.connected_users[user]["writer"]
-                await self._send_packet(target_writer, leave_packet)
-            except Exception:
-                pass
+        async with self._users_lock:
+            for user in list(self.connected_users):
+                try:
+                    target_writer = self.connected_users[user]["writer"]
+                    await self._send_packet(target_writer, leave_packet)
+                except Exception as e:
+                    logger.error(f"Error: {e}")
+                    pass
 
         # Close the socket of the disconnected user
         try:
             writer_to_close.close()
             await writer_to_close.wait_closed()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error: {e}")
             pass
 
-    async def _inactivity_check(self):
-        while True:
-            await asyncio.sleep(10)
-
-            timeout = 300  # 5 min
-            now = datetime.now()
-
-            for nickname in list(self.connected_users.keys()):
-                last_active = self.connected_users[nickname]["last_actvity"]
-                elapsed = (now - last_active).total_seconds()
-
-                if elapsed > timeout:
-                    pass
+    # async def _inactivity_check(self):
+    #     while True:
+    #         await asyncio.sleep(10)
+    #
+    #         timeout = 300  # 5 min
+    #         now = datetime.now()
+    #
+    #         for nickname in list(self.connected_users.keys()):
+    #             last_active = self.connected_users[nickname]["last_activity"]
+    #             elapsed = (now - last_active).total_seconds()
+    #
+    #             if elapsed > timeout:
+    #                 pass
+    #                 # self._cleanup(nickname)
 
 
 # --- Execution ---

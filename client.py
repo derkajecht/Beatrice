@@ -4,6 +4,7 @@ import base64
 import asyncio
 import json
 import hashlib
+import secrets
 
 from typing import Union, List, Tuple, Any, Optional
 
@@ -27,8 +28,11 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Set max nickname length at 20 chars
+# Constants
 MAX_NICKNAME_LENGTH = 20
+MAX_PACKET_LENGTH = 1024 * 1024
+RSA_KEY_SIZE = 2048
+AES_KEY_SIZE = 256
 
 
 class Client:
@@ -53,9 +57,13 @@ class Client:
         # --- CRYPTO SETUP ---
         # /--- Public and private key generation
         self.private_key: RSAPrivateKey = rsa.generate_private_key(
-            public_exponent=65537, key_size=2048, backend=default_backend()
+            public_exponent=65537, key_size=RSA_KEY_SIZE, backend=default_backend()
         )
         self.public_key: RSAPublicKey = self.private_key.public_key()
+        # ---/
+
+        # /--- Nonce set for checking seen nonces
+        self.seen_nonces = set()
         # ---/
 
         # /--- Serialize public key for transmission
@@ -130,11 +138,14 @@ class Client:
         """
         try:
             # Encodes the packet to bytes and writes it to the writer, followed by a newline.
-            assert self.writer is not None
+
             self.writer.write((json.dumps(packet) + "\n").encode("utf-8"))
 
             # Drains the writer's buffer, ensuring that all data has been sent.
-            assert self.writer is not None
+            if self.writer is None:
+                logger.error("No connection.")
+                return
+
             await self.writer.drain()
 
         # If an exception occurs
@@ -153,31 +164,34 @@ class Client:
         try:
             # Receive messages and assign to a variable.
             # The message comes in as bytes. decode to utf-8 string format for processing.
-            message = await self.reader.readline()
-
-            # if an empty string is received, this means the client has disconnected.
-            if message == b"":
-                logger.error("Client disconnected")
-                raise Exception("Client has disconnected. Connection will be closed.")
-
-            # if no message is received or an empty message is received, do nothing
-            elif not message or message == b"\n":
-                pass
-
-            try:
-                # decrypt the utf8 message into JSON packet if its valid json
-                packet: dict[str, str] = json.loads(message.decode("utf-8"))
-                return packet
-
-            # json error if there is an invalid json
-            except json.JSONDecodeError as e:
-                logger.warning(f"Invalid JSON received: {e}")
-                pass
-
-        # generic exception for any other error not covered above
+            message: bytes = await self.reader.readline()
         except Exception as e:
-            logger.warning(f"Error receiving packet: {e}")
-            return
+            logger.error(f"Socket read error {e}")
+            raise e
+
+        if len(message) > MAX_PACKET_LENGTH:
+            logger.error("Packet too large.")
+            return None
+
+        # if an empty string is received, this means the client has disconnected.
+        if message == b"":
+            logger.error("Client disconnected")
+            # raise ConnectionResetError("Client disconnected")
+            return None
+
+        # if no message is received or an empty message is received, do nothing
+        if not message or message == b"\n":
+            return None
+
+        try:
+            # decrypt the utf8 message into JSON packet if its valid json
+            packet: dict[str, str] = json.loads(message.decode("utf-8"))
+            return packet
+
+        # json error if there is an invalid json
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received: {e}")
+            pass
 
     def store_user_public_key(self, nickname: str, public_key_str: str):
         """
@@ -251,9 +265,9 @@ class Client:
             response_packet = await self._receive_packet()
 
             if not response_packet:
-                pass
+                return False
 
-            if response_packet and response_packet.get("t") == "ERR":
+            if response_packet.get("t") == "ERR":
                 # get the actul error message from the error packet
                 error_message = response_packet.get("c")
                 logger.error(
@@ -262,7 +276,7 @@ class Client:
                 return False
 
             # if we receive a dir packet. get the data from it.
-            elif response_packet and response_packet.get("t") == "DIR":
+            elif response_packet.get("t") == "DIR":
                 # Get the list of connected users from the dir packet, send by the server and store them in a var
                 connected_users_list = response_packet.get("p", [])
 
@@ -273,12 +287,27 @@ class Client:
                     if nickname and public_key_info:
                         self.store_user_public_key(nickname, public_key_info)
 
+                final_connected_users_list = ", ".join(
+                    [
+                        user["n"].strip()
+                        for user in connected_users_list
+                        if user != self.nickname
+                    ]
+                )
+
+                await self.event_queue.put(
+                    (
+                        "dir",
+                        f"Connected. You are chatting with {final_connected_users_list}.",
+                    )
+                )
+
                 # --- add in logic to get the correct info from the received dir packet
                 # --- need to add the nickname and public key info for each user that is currently connected
 
         except Exception as e:
             logger.error(
-                "Error receiving response from the server! Exiting. Please try reconnecting. "
+                f"Error receiving response from the server! Exiting. Please try reconnecting. {e} "
             )
             return False
 
@@ -310,9 +339,18 @@ class Client:
                 encrypted_msg_b64 = packet.get("m")
                 encrypted_key_b64 = packet.get("k")
                 iv_b64 = packet.get("iv")
+                signature_b64 = packet.get("h")
 
                 # check to see if all parts of the message packet have been received, if not, chuck em out and log an error
-                if not all([sender, encrypted_msg_b64, encrypted_key_b64, iv_b64]):
+                if not all(
+                    [
+                        sender,
+                        encrypted_msg_b64,
+                        encrypted_key_b64,
+                        iv_b64,
+                        signature_b64,
+                    ]
+                ):
                     logger.error("Message packet incomplete")
                     continue
 
@@ -321,6 +359,7 @@ class Client:
                     encrypted_key = base64.b64decode(encrypted_key_b64)
                     encrypted_message = base64.b64decode(encrypted_msg_b64)
                     iv = base64.b64decode(iv_b64)
+                    signature = base64.b64decode(signature_b64)
 
                     # Decrypt the aes key with the private rsa key
                     aes_key = self.private_key.decrypt(
@@ -339,15 +378,48 @@ class Client:
                         iv, encrypted_message, None
                     )
 
+                    # Create local hash of the content to compare against the hash received
+                    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+                    digest.update(decrypted_content_bytes)
+                    payload_hash = digest.finalize()
+
+                    # Get senders public key to use to verify the signature
+                    sender_public_key = self.user_public_keys.get(sender)
+
+                    if not sender_public_key:
+                        logger.error(f"No public key for {sender}")
+                        continue
+
+                    try:
+                        sender_public_key.verify(
+                            signature,
+                            payload_hash,
+                            padding.PSS(
+                                mgf=padding.MGF1(hashes.SHA256()),
+                                salt_length=padding.PSS.MAX_LENGTH,
+                            ),
+                            hashes.SHA256(),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"SECURITY: Invalid signature from {sender}. Message rejected. {e}"
+                        )
+                        continue
+
                     # decrypt the json content using utf-8 and json.load
                     decrypted_json_str = decrypted_content_bytes.decode("utf-8")
-
-                    with open("debug_log.txt", "a") as f:
-                        f.write(
-                            f"DEBUG: Type: {type(decrypted_json_str)}, Content: '{decrypted_json_str}'\n"
-                        )
-
                     message_payload = json.loads(decrypted_json_str)
+
+                    # Check for replay attacks. If the nonce has been seen before, let the user know
+                    replay_nonce = message_payload.get("nonce")
+                    if replay_nonce in self.seen_nonces:
+                        print(
+                            f"SECURITY WARNING: Replay attack detected! Dropping packet {replay_nonce}"
+                        )
+                        continue
+
+                    # If we get here, the message is unique and not been replayed, so add it to the set
+                    self.seen_nonces.add(replay_nonce)
 
                     # Send to tui
                     await self.event_queue.put(("message", message_payload))
@@ -421,18 +493,19 @@ class Client:
         #   "s": "Alice",          // Sender (Added by Server)
         #
         #   "iv": "...",           // AES Initialization Vector (Base64 String)
-        #   "k": "...",          // The AES Key, encrypted with Recipient's RSA Public Key (Base64 String)
-        #   "m": "..."             // The Message Content, encrypted with the AES Key (Base64 String)
+        #   "k": "...",            // The AES Key, encrypted with Recipient's RSA Public Key (Base64 String)
+        #   "m": "..."             // The Message Content (sender, message content, nonce), encrypted with the AES Key (Base64 String)
+        #   "h": "..."             // Message digest, to protect against tampering whilst in transit
         # }
         # - Send the packet via _send_packet method
 
         # if the user enters quit or exit, stop the program
         if content.strip().lower() in ["exit", "quit"]:
             await self.event_queue.put(("status", "You have disconnected."))
-            return
 
         # Assume that the message is being sent to everyone initially
         recipient = "ALL"
+
         if not content:
             return
         else:
@@ -467,22 +540,46 @@ class Client:
         else:
             pass
 
-        payload_dict = {"sender": self.nickname, "content": content}
+        # Generate replay_nonce for stopping replay mitm attacks
+        replay_nonce = secrets.token_hex(16)
+
+        payload_dict = {
+            "sender": self.nickname,
+            "content": content,
+            "nonce": replay_nonce,
+        }
 
         payload_json_str = json.dumps(payload_dict)
 
+        payload_bytes = payload_json_str.encode("utf-8")
+
+        # SHA256 hash of the base64 string, to be added to the packet for verification
+        digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+        digest.update(payload_bytes)
+        payload_hash = digest.finalize()
+
+        # Signature created with senders private key
+        signature = self.private_key.sign(
+            payload_hash,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256(),
+        )
+
         # Generate AES and IV for encryption
-        aes_key = AESGCM.generate_key(bit_length=256)
+        aes_key = AESGCM.generate_key(bit_length=AES_KEY_SIZE)
         aesgcm = AESGCM(aes_key)
-        nonce = os.urandom(12)
+        iv_nonce = os.urandom(12)
 
         encrypted_content_bytes = aesgcm.encrypt(
-            nonce, payload_json_str.encode("utf-8"), None
+            iv_nonce, payload_json_str.encode("utf-8"), None
         )
 
         # Convert back to string for the packet
-        b64_iv = base64.b64encode(nonce).decode("utf-8")
+        b64_iv = base64.b64encode(iv_nonce).decode("utf-8")
         b64_content = base64.b64encode(encrypted_content_bytes).decode("utf-8")
+        b64_signature = base64.b64encode(signature).decode("utf-8")
 
         # Create empty targets list to populate with recipients
         targets = []
@@ -532,8 +629,9 @@ class Client:
                     "r": target_nick,  # Routing: Individual Nickname
                     # "s": ... server adds this
                     "iv": b64_iv,  # AES Setup
-                    "k": b64_encrypted_key,  # The "Key to the Door"
-                    "m": b64_content,  # The Message
+                    "k": b64_encrypted_key,  # The key to the door
+                    "m": b64_content,  # The message
+                    "h": b64_signature,
                 }
 
                 await self._send_packet(message_packet)
@@ -553,23 +651,17 @@ class Client:
             await self.event_queue.put(("sent_to_user", f"DM sent to {recipient}"))
 
     # Generates a list of connected users
-    async def display_connected_users(self) -> set[str]:
-        # create empty list to store usernames
-        online_list = []
+    async def display_connected_users(self):
         # Go through every username in user_public_keys
-        online_list.append(f"Me ({self.nickname})")
-        for user in self.user_public_keys:
-            # If the current user is not the same as the nickname
-            if user != self.nickname:
-                online_list.append(user)
-            # If the current user is the same as the nickname, add "Me" to the list
-        return set(online_list)
+        return {f"Me [{self.nickname}]"} | set(self.user_public_keys.keys())
 
     async def _cleanup(self) -> None:
         """
         Properly close connections and clean up resources.
         """
         if self.writer:
+            # Clear the seen_nonces
+            self.seen_nonces.clear()
             self.writer.close()
             await self.writer.wait_closed()
         self.connected = False

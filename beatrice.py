@@ -17,11 +17,12 @@ from client import Client
 # Constants
 SERVER_HOST = "localhost"
 SERVER_PORT = 55556
+MAX_NICKNAME_LENGTH = 20
 
 
 # Nickname must be between 3 and 20 characters long
 def validate_nickname(value: str) -> bool:
-    return 3 <= len(value) <= 20 and value.isalnum()
+    return 3 <= len(value) <= MAX_NICKNAME_LENGTH and value.isalnum()
 
 
 class TimestampLabel(Label):
@@ -78,7 +79,7 @@ class Beatrice(App):
                 validators=[
                     validation.Function(
                         validate_nickname,
-                        "Nickname must be between 3 and 20 characters long and contain only letters or nummers.",
+                        f"Nickname must be between 3 and {MAX_NICKNAME_LENGTH} characters long and contain only letters or numbers.",
                     )
                 ],
                 id="nickname_input",
@@ -89,22 +90,22 @@ class Beatrice(App):
 
         yield Container(
             Label("""
-        ⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-        ⠀⠀⢀⡤⠞⠋⠉⠀⠀⠀⠀⠀⠀⠀⠉⠙⠳⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-        ⠀⣠⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡆⠀⠀⠀⠀⠀⠀⠀⠀
-        ⢠⠇⠀⢰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⡄⠀⢸⡀⠀⠀⠀⠀⠀⠀⠀
-        ⢸⠀⠀⢸⠀⠀⢰⣶⡀⠀⠀⠀⢠⣶⡀⠀⠀⡇⠀⢸⠂⠀⠀⠀⠀⠀⠀⠀
-        ⠈⢧⣀⢸⡄⠀⠀⠉⠀⠀⠀⠀⠀⠉⠀⠀⢠⡇⣠⡞⠁⠀⠀⠀⠀⠀⠀⠀
-        ⠀⠀⠉⠙⣇⠀ ⠀⠀⢶⣶⣶⠀ ⠀⠀⣾⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
-        ⠀⠀⠀⠀⠘⢦⡀⠀⠀⠀⢸⠀⠀⠀⠀⢀⣼⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-        ⠀⠀⠀⠀⢠⠞⠓⠤⣤⣀⣀⣠⣤⠴⠚⠉⠑⠲⢤⡀⠀⠀⠀⠀⠀⠀⠀⠀
-        ⠀⠀⠀⠀⢸⠀⠀⣀⣠⣀⣀⣠⣀⡀⠀⠀⠀⠀⠀⠈⠳⣄⠀⠀⠀⠀⠀⠀
-        ⠀⠀⠀⠀⢸⠀⠰⡇⠀⠈⠁⠀⠈⡧⠀⠀⠀⠀⠀⠀⠀⠈⢦⠀⠀⢠⠖⡆
-        ⠀⠀⠀⠀⢸⠀⠀⠑⢦⡀⠀⣠⠞⠁⠀⢸⠀⠀⠀⠀⠀⠀⠈⣷⠞⠋⢠⠇
-        ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠙⡞⠁⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⢹⢀⡴⠋⠀
-        ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⡇⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⡞⠉⠀⠀⠀
-        ⠀⠀⠀⠀⢸⡀⠀⠀⠀⢠⣧⠀⠀⠀⠀⣸⡀⠀⠀⠀⠀⣠⠞⠁⠀⠀⠀⠀
-        ⠀⠀⠀⠀⠈⠳⠦⠤⠴⠛⠈⠓⠤⠤⠞⠁⠉⠛⠒⠚⠋⠁⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⢀⡤⠞⠋⠉⠀⠀⠀⠀⠀⠀⠀⠉⠙⠳⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⣠⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡆⠀⠀⠀⠀⠀⠀⠀⠀
+    ⢠⠇⠀⢰⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠰⡄⠀⢸⡀⠀⠀⠀⠀⠀⠀⠀
+    ⢸⠀⠀⢸⠀⠀⢰⣶⡀⠀⠀⠀⢠⣶⡀⠀⠀⡇⠀⢸⠂⠀⠀⠀⠀⠀⠀⠀
+    ⠈⢧⣀⢸⡄⠀⠀⠉⠀⠀⠀⠀⠀⠉⠀⠀⢠⡇⣠⡞⠁⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠉⠙⣇⠀ ⠀⠀⢶⣶⣶⠀ ⠀⠀⣾⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠘⢦⡀⠀⠀⠀⢸⠀⠀⠀⠀⢀⣼⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⢠⠞⠓⠤⣤⣀⣀⣠⣤⠴⠚⠉⠑⠲⢤⡀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀       ⠀⠈⠳⣄⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⢸⠀⠰⡇⠀⠈⠁⠀⠈⡧⠀⠀⠀⠀⠀⠀⠀⠈⢦⠀⠀⢠⠖⡆
+    ⠀⠀⠀⠀⢸⠀⠀⠑⢦⡀⠀⣠⠞⠁⠀⢸⠀⠀⠀⠀⠀⠀⠈⣷⠞⠋⢠⠇
+    ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠙⡞⠁⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⢹⢀⡴⠋⠀
+    ⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⡇⠀⠀⠀⠀⢸⠀⠀⠀⠀⠀⠀⠀⡞⠉⠀⠀⠀
+    ⠀⠀⠀⠀⢸⡀⠀⠀⠀⢠⣧⠀⠀⠀⠀⣸⡀⠀⠀⠀⠀⣠⠞⠁⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠈⠳⠦⠤⠴⠛⠈⠓⠤⠤⠞⠁⠉⠛⠒⠚⠋⠁⠀⠀⠀⠀⠀⠀
             """),
             id="ascii_dog",
         )
@@ -159,6 +160,7 @@ class Beatrice(App):
                     # remove the input field from the screen
                     self.query_one("#nickname_input").remove()
                     self.query_one("#login_title_container").remove()
+                    self.query_one("#ascii_dog").remove()
 
                     # /-- Make the chat log and online user log appear only after a valid nickname is inputted
                     chat_log = self.query_one("#chat_log")
@@ -167,6 +169,8 @@ class Beatrice(App):
                     online_user_log = self.query_one("#online_user_log")
                     online_user_log.remove_class("hidden")
                     # --/
+
+                    # Get the usernames from client
 
                     await chat_log.mount(
                         Label(
@@ -199,7 +203,7 @@ class Beatrice(App):
                     # perform handshake
                     await self.client.check_handshake()
 
-                    # start receive_messages indefinately
+                    # start receive_messages indefinitely
                     self.receiver_task = self.run_worker(self.client.receive_messages())
 
                     # start process to look at queue
@@ -366,18 +370,13 @@ class Beatrice(App):
             else:
                 online_list.append(ListItem(Label(f"🟢 {user}")))
 
-    # def handle_inactivity_timeout(self):
-    #     """Called when the user has been inactive for 5 mins"""
-    #     return True
-    #
-    #     # # Handle the client disconnect and call the cleanup function
-    #     # if self.client:
-    #     #     asyncio.create_task(self.client._cleanup())
-    #     # self.exit()
-
-    # def reset_inactivity_timer(self):
-    #     if hasattr(self, "inactivity_timer"):
-    #         self.inactivity_timer.reset()
+    async def on_unmount(self):
+        if self.client:
+            if hasattr(self.client, "writer"):
+                if self.receiver_task:
+                    self.receiver_task.cancel()
+                if self.processor_task:
+                    self.processor_task.cancel()
 
 
 if __name__ == "__main__":
