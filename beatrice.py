@@ -52,7 +52,7 @@ class TimestampLabel(Label):
 
 class Beatrice(App):
 
-    # A TUI messenger named Beatrice
+    # A TUI chat application named Beatrice
     CSS_PATH = "styling.tcss"
 
     def compose(self) -> ComposeResult:
@@ -177,8 +177,6 @@ class Beatrice(App):
                         )
                     )
 
-                    chat_log.scroll_end(animate=False)
-
                     # init the vertical scroll and input widgets for the ui
                     await self.mount(
                         Input(
@@ -232,10 +230,6 @@ class Beatrice(App):
 
         while True:
 
-            # Initialize variables to hold the type of event and its contents
-            event_type = None
-            content = None
-
             # Get the events from the queue and handle them appropriately
             if self.client is not None:
                 event_type, content = await self.client.event_queue.get()
@@ -270,8 +264,7 @@ class Beatrice(App):
                 elif event_type == "my_message":
                     message = content.get("content")
 
-                    # get the chat log info and send the information to it
-                    chat_log = self.query_one("#chat_log")
+                    # send the information to it
                     await chat_log.mount(
                         Container(
                             TimestampLabel(message, prefix="Me: \n", classes="bubble"),
@@ -282,8 +275,7 @@ class Beatrice(App):
                 # if the event type is the join packet notify the users that someone has connected
                 elif event_type == "join_packet":
 
-                    # get the chat log info and send the information to it
-                    chat_log = self.query_one("#chat_log")
+                    # send the information to it
                     await chat_log.mount(
                         Container(
                             Label(f"{content}", classes="join_message"),
@@ -295,7 +287,6 @@ class Beatrice(App):
                 elif event_type == "dir":
 
                     # Display the number of connected users
-                    chat_log = self.query_one("#chat_log")
                     await chat_log.mount(
                         Container(
                             Label(f"{content}", classes="dir_message"),

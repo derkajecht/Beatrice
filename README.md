@@ -9,7 +9,7 @@ And, thanks to its custom end-to-end encryption implementation, Beatrice has *ab
 
 ## 🚧 Project Status: Prototype
 
-Its primary goal was to help me learn core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**.
+It's primary goal was to help me learn core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**.
 
 **Current Features:**
 * **🖥️ Modern TUI:** Built with [Textual](https://textual.textualize.io/) for a smooth, mouse-compatible terminal experience.
@@ -41,7 +41,7 @@ This project requires **Python 3.10+**.
 Clone the repository and install the dependencies (Textual and Cryptography).
 
 ```bash
-git clone [https://github.com/derkajecht/beatrice.git](https://github.com/your_username/beatrice.git)
+git clone [https://github.com/derkajecht/beatrice.git](https://github.com/derkajecht/beatrice.git)
 cd beatrice
 pip install textual cryptography
 ```
@@ -55,11 +55,11 @@ python server.py
 ```bash
 python beatrice.py
 ```
-*Enter a nickname when prompted. You can open multiple beatrice.py client windows to test messaging between them :)*
+*Enter a nickname when prompted. You can open multiple beatrice.py client windows to test messaging between them. :)*
 
 ## 🐶 The Story: What's an "Encryption Dog"?
 
-Beatrice is the name of my wife and I's Jack Russell puppy. She's wonderful.
+Beatrice is the name of my wife's and my Jack Russell puppy. She's wonderful.
 
 For a puppy, she's very quiet. When I'm singing to her, or ranting about my day at work, she just looks up at me and then immediately gets back to chewing my hoodie, the desk, or my shoes...
 

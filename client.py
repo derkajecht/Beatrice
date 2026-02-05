@@ -44,7 +44,7 @@ class Client:
         self.nickname: str = nickname
         # ---/
 
-        # /--- Aysncio shtuff ---
+        # /--- Asyncio stuff ---
         self._reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
 
@@ -197,7 +197,7 @@ class Client:
         """
         Stores the given user's public key in a dictionary with the nickname as the key. This allows for quick lookup of other users' public keys when sending encrypted messages.
 
-        parameters:
+        Parameters:
         - nickname (str): The nickname associated with the user whose public key is being stored.
 
         """
@@ -233,10 +233,6 @@ class Client:
         # return the first 4 characters and last 4 characters of sha256 hash
         return f"{sha[:4]}:{sha[4:8]}"
 
-    @reader.setter
-    def reader(self, value: asyncio.StreamReader) -> None:
-        self._reader = value
-
     async def check_handshake(self) -> bool:
         """
         Async method to check the client handshake response. If successful, the client public key is stored in the Client class object so messages can be sent to and from the connected client(s).
@@ -267,51 +263,62 @@ class Client:
             if not response_packet:
                 return False
 
-            if response_packet.get("t") == "ERR":
-                # get the actul error message from the error packet
-                error_message = response_packet.get("c")
-                logger.error(
-                    f"Error received: {error_message}! Exiting. Please try reconnecting."
-                )
-                return False
+            try:
+                if response_packet.get("t") == "ERR":
+                    # get the actual error message from the error packet
+                    error_message = response_packet.get("c")
+                    logger.error(
+                        f"Error received: {error_message}! Exiting. Please try reconnecting."
+                    )
+                    return False
+            except Exception as e:
+                logger.error(f"Error while receiving message: {e}")
 
             # if we receive a dir packet. get the data from it.
-            elif response_packet.get("t") == "DIR":
-                # Get the list of connected users from the dir packet, send by the server and store them in a var
-                connected_users_list = response_packet.get("p", [])
+            try:
+                if response_packet.get("t") == "DIR":
+                    # Get the list of connected users from the dir packet, send by the server and store them in a var
+                    connected_users_list = response_packet.get("p", [])
 
-                for user_data in connected_users_list:
-                    nickname = user_data.get("n")
-                    public_key = user_data.get("k")
+                    for user_data in connected_users_list:
+                        nickname = user_data.get("n")
+                        public_key = user_data.get("k")
 
-                    if nickname and public_key:
-                        self.store_user_public_key(nickname, public_key)
+                        if nickname and public_key:
+                            self.store_user_public_key(nickname, public_key)
 
-                final_connected_users_list = ", ".join(
-                    [
-                        user["n"].strip()
-                        for user in connected_users_list
-                        if user != self.nickname
-                    ]
-                )
+                    final_connected_users_list = ", ".join(
+                        [
+                            user["n"].strip()
+                            for user in connected_users_list
+                            if user != self.nickname
+                        ]
+                    )
 
-                if final_connected_users_list:
-                    await self.event_queue.put(
-                        (
-                            "dir",
-                            f"Connected. You are chatting with {final_connected_users_list}.",
+                    if final_connected_users_list:
+                        await self.event_queue.put(
+                            (
+                                "dir",
+                                f"Connected. You are chatting with {final_connected_users_list}.",
+                            )
                         )
-                    )
-                self.connected = True
-                return True
+                    self.connected = True
+                    return True
+            except Exception as e:
+                logger.error(f"Error while receiving message. {e}")
 
-            elif response_packet == "J":
-                new_nick, new_key = response_packet.get("n"), response_packet.get("k")
-                if new_nick and new_key:
-                    self.store_user_public_key(new_nick, new_key)
-                    await self.event_queue.put(
-                        ("join_packet", f"{new_nick} joined during the handshake.")
+            try:
+                if response_packet == "J":
+                    new_nick, new_key = response_packet.get("n"), response_packet.get(
+                        "k"
                     )
+                    if new_nick and new_key:
+                        self.store_user_public_key(new_nick, new_key)
+                        await self.event_queue.put(
+                            ("join_packet", f"{new_nick} joined during the handshake.")
+                        )
+            except Exception as e:
+                logger.error(f"Error receiving message. {e}")
 
         except Exception as e:
             logger.error(
@@ -488,7 +495,7 @@ class Client:
 
     async def send_message(self, content: str):
         """
-        Collect input from the user. Checks if the message is intended for a specific person, if not, broadcast to all. Remove whitespace at the start and end of each message. Encrypt the message with AES, then encrypte the AES key with RSA public key. Build the message packet, and send via the _send_packet helper method. bosh.
+        Collect input from the user. Checks if the message is intended for a specific person, if not, broadcast to all. Remove whitespace at the start and end of each message. Encrypt the message with AES, then encrypt the AES key with RSA public key. Build the message packet, and send via the _send_packet helper method. bosh.
         """
 
         # Packet structure for reference;

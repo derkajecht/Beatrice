@@ -4,7 +4,7 @@ Screen {
 #login_screen {
     width: 100%;
     height: 15%;
-    align: center middle; /* This centers the Child (the Input) */
+    align: center middle; /* This centers the child (the Input) */
 }
 
 #login_title_container {
@@ -13,8 +13,6 @@ Screen {
     align: center bottom; /* This centers the Child (the Input) */
     text-style: bold;
     text-align: center;
-    # border: round #ebbcba;
-    # align-vertical: middle;
 }
 
 #ascii_dog {

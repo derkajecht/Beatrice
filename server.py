@@ -11,7 +11,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Contstants
+# Constants
 NICKNAME_SUFFIX_MIN = 100
 NICKNAME_SUFFIX_MAX = 999
 HANDSHAKE_TIMEOUT = 5
@@ -38,7 +38,7 @@ class BeatriceServer:
         self._users_lock = asyncio.Lock()
 
     async def start_server(self):
-        # Start tha bg task that checks for inactive users
+        # Start the bg task that checks for inactive users
         # asyncio.create_task(self._inactivity_check())
 
         server = await asyncio.start_server(
@@ -122,7 +122,7 @@ class BeatriceServer:
 
         Parse JSON: If it's not JSON, kick them out.
 
-        Check if weve received the correct packet type "H". If not, do not continue.
+        Check if we've received the correct packet type "H". If not, do not continue.
 
         Extract Key: Does the k (key) field exist?
 
@@ -204,7 +204,7 @@ class BeatriceServer:
                     self.latest_nickname = final_nickname
                     return final_nickname
                 except Exception as e:
-                    logger.error(f"Nickname already in use: {e}")
+                    logger.error(f"Error setting nickname. {e}")
                     return None
 
             else:  # If the packet type doesn't begin with "H" which indicates its a handshake request.
@@ -311,7 +311,7 @@ class BeatriceServer:
                         )
                     except Exception as e:
                         logger.error(f"Error: {e}")
-                        pass
+                        return
                 else:
                     # Send error packet if the writer is not found
                     error_packet = {
@@ -381,6 +381,7 @@ class BeatriceServer:
 # TODO: Feature that sets user status to "online" or "away" depending on the time they last sent a packet to the server
 # This will require the client sending a packet to the server whenever they send a message or move the mouse.
 # If the server receives that packet before a timeout length, a green circle will appear next to their name in the ui. If not, it will set them to away
+
 
 # --- Execution ---
 if __name__ == "__main__":
