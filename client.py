@@ -7,6 +7,7 @@ import hashlib
 import secrets
 
 from typing import Union, List, Tuple, Any, Optional
+from collections import deque
 
 # Cryptography imports
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -29,10 +30,10 @@ logging.basicConfig(
 )
 
 # Constants
-MAX_NICKNAME_LENGTH = 20
-MAX_PACKET_LENGTH = 1024 * 1024
+MAX_PACKET_LENGTH = 256 * 1024  # 256kb (should be large enough)
 RSA_KEY_SIZE = 2048
 AES_KEY_SIZE = 256
+TARGET_PAYLOAD_SIZE = 4096
 
 
 class Client:
@@ -48,7 +49,7 @@ class Client:
         self.writer: Optional[asyncio.StreamWriter] = None
 
         # Queue for sending events to the UI
-        self.event_queue: asyncio.Queue[Event] = asyncio.Queue()
+        self.event_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=100)
         # ---/
 
         # Init connected status as false since we are not connected yet
@@ -63,7 +64,7 @@ class Client:
         # ---/
 
         # /--- Nonce set for checking seen nonces
-        self.seen_nonces = set()
+        self.seen_nonces = deque(maxlen=2000)
         # ---/
 
         # /--- Serialize public key for transmission
@@ -129,7 +130,7 @@ class Client:
             raise Exception("Unable to connect to host and port.")
 
     # helper method to avoid re-writing the same lines of code over and over
-    async def _send_packet(self, packet: dict[str, str]):
+    async def _send_packet(self, packet: dict[str, Any]):
         """
         1. Encodes the packet to JSON bytes (with newline).
         2. Writes it to the specific writer.
@@ -174,9 +175,8 @@ class Client:
             return None
 
         # if an empty string is received, this means the client has disconnected.
-        if message == b"":
+        if not message or message == b"":
             logger.error("Client disconnected")
-            # raise ConnectionResetError("Client disconnected")
             return None
 
         # if no message is received or an empty message is received, do nothing
@@ -282,10 +282,10 @@ class Client:
 
                 for user_data in connected_users_list:
                     nickname = user_data.get("n")
-                    public_key_info = user_data.get("k")
+                    public_key = user_data.get("k")
 
-                    if nickname and public_key_info:
-                        self.store_user_public_key(nickname, public_key_info)
+                    if nickname and public_key:
+                        self.store_user_public_key(nickname, public_key)
 
                 final_connected_users_list = ", ".join(
                     [
@@ -295,23 +295,29 @@ class Client:
                     ]
                 )
 
-                await self.event_queue.put(
-                    (
-                        "dir",
-                        f"Connected. You are chatting with {final_connected_users_list}.",
+                if final_connected_users_list:
+                    await self.event_queue.put(
+                        (
+                            "dir",
+                            f"Connected. You are chatting with {final_connected_users_list}.",
+                        )
                     )
-                )
+                self.connected = True
+                return True
 
-                # --- add in logic to get the correct info from the received dir packet
-                # --- need to add the nickname and public key info for each user that is currently connected
+            elif response_packet == "J":
+                new_nick, new_key = response_packet.get("n"), response_packet.get("k")
+                if new_nick and new_key:
+                    self.store_user_public_key(new_nick, new_key)
+                    await self.event_queue.put(
+                        ("join_packet", f"{new_nick} joined during the handshake.")
+                    )
 
         except Exception as e:
             logger.error(
                 f"Error receiving response from the server! Exiting. Please try reconnecting. {e} "
             )
             return False
-
-        return True
 
     async def receive_messages(self) -> None:
         """
@@ -413,13 +419,13 @@ class Client:
                     # Check for replay attacks. If the nonce has been seen before, let the user know
                     replay_nonce = message_payload.get("nonce")
                     if replay_nonce in self.seen_nonces:
-                        print(
+                        logger.warning(
                             f"SECURITY WARNING: Replay attack detected! Dropping packet {replay_nonce}"
                         )
                         continue
 
                     # If we get here, the message is unique and not been replayed, so add it to the set
-                    self.seen_nonces.add(replay_nonce)
+                    self.seen_nonces.append(replay_nonce)
 
                     # Send to tui
                     await self.event_queue.put(("message", message_payload))
@@ -481,23 +487,20 @@ class Client:
                 await self.event_queue.put(("err", error_message))
 
     async def send_message(self, content: str):
-        # - Collect input from the user (must be non-blocking)
-        # - Checks to see if the message is intended for a specific person, if not, broadcast to all. Will need to loop through current connected_users if sending to all.
-        # - Remove whitespace at the start and end of each message
-        # - Encrypt the message with the AES key.
-        # - Encrypt the AES key with the recipients public key. Might be complex loop if sending to more than one user.
-        # - Build the message packet;
+        """
+        Collect input from the user. Checks if the message is intended for a specific person, if not, broadcast to all. Remove whitespace at the start and end of each message. Encrypt the message with AES, then encrypte the AES key with RSA public key. Build the message packet, and send via the _send_packet helper method. bosh.
+        """
+
+        # Packet structure for reference;
         # {
         #   "t": "M",              // Type: Message
         #   "r": "Bob",            // Recipient: "Nickname" or "ALL"
         #   "s": "Alice",          // Sender (Added by Server)
-        #
         #   "iv": "...",           // AES Initialization Vector (Base64 String)
         #   "k": "...",            // The AES Key, encrypted with Recipient's RSA Public Key (Base64 String)
         #   "m": "..."             // The Message Content (sender, message content, nonce), encrypted with the AES Key (Base64 String)
         #   "h": "..."             // Message digest, to protect against tampering whilst in transit
         # }
-        # - Send the packet via _send_packet method
 
         # if the user enters quit or exit, stop the program
         if content.strip().lower() in ["exit", "quit"]:
@@ -543,15 +546,28 @@ class Client:
         # Generate replay_nonce for stopping replay mitm attacks
         replay_nonce = secrets.token_hex(16)
 
+        # Create payload dict
         payload_dict = {
             "sender": self.nickname,
             "content": content,
             "nonce": replay_nonce,
         }
 
-        payload_json_str = json.dumps(payload_dict)
+        # Convert dictionary into JSON string
+        payload_packet = json.dumps(payload_dict)
 
-        payload_bytes = payload_json_str.encode("utf-8")
+        # Get length of payload to calculate the remaining bytes for padding
+        payload_length = len(payload_packet.encode("utf-8"))
+        # Calculate how much padding is needed
+        padding_needed = TARGET_PAYLOAD_SIZE - payload_length - 50
+
+        # If needed, generate random junk data to pad the packet to the target size
+        if padding_needed > 0:
+            junk_data = secrets.token_hex(padding_needed // 2)
+            payload_dict["_pad"] = junk_data
+
+        # Serialize the packet dictionary to a JSON string
+        payload_bytes = payload_packet.encode("utf-8")
 
         # SHA256 hash of the base64 string, to be added to the packet for verification
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
@@ -572,14 +588,14 @@ class Client:
         aesgcm = AESGCM(aes_key)
         iv_nonce = os.urandom(12)
 
-        encrypted_content_bytes = aesgcm.encrypt(
-            iv_nonce, payload_json_str.encode("utf-8"), None
-        )
+        encrypted_content_bytes = aesgcm.encrypt(iv_nonce, payload_bytes, None)
 
         # Convert back to string for the packet
-        b64_iv = base64.b64encode(iv_nonce).decode("utf-8")
-        b64_content = base64.b64encode(encrypted_content_bytes).decode("utf-8")
-        b64_signature = base64.b64encode(signature).decode("utf-8")
+        b64_iv = base64.b64encode(iv_nonce).decode("utf-8").replace("\n", "")
+        b64_content = (
+            base64.b64encode(encrypted_content_bytes).decode("utf-8").replace("\n", "")
+        )
+        b64_signature = base64.b64encode(signature).decode("utf-8").replace("\n", "")
 
         # Create empty targets list to populate with recipients
         targets = []
@@ -601,6 +617,8 @@ class Client:
         if not targets:
             await self.event_queue.put(("no_targets", "No other users connected."))
             return
+
+        # NOTE: Optimization needed. Currently, we encrypt and upload the full message body N times for N users. A better approach would be to encrypt the body once (AES), and only encrypt the AES key N times (RSA), sending a single payload to the server.
 
         # For all of the nickname(s) in targets.
         # - Get their public RSA key
@@ -653,7 +671,7 @@ class Client:
     # Generates a list of connected users
     async def display_connected_users(self):
         # Go through every username in user_public_keys
-        return {f"Me [{self.nickname}]"} | set(self.user_public_keys.keys())
+        return set(self.user_public_keys.keys())
 
     async def _cleanup(self) -> None:
         """
@@ -665,37 +683,3 @@ class Client:
             self.writer.close()
             await self.writer.wait_closed()
         self.connected = False
-
-
-# # --- Execution ---
-# if __name__ == "__main__":
-#
-#     # Take user nickname input before calling asyncio to avoid blocking
-#     user_nickname = input("Enter your nickname: ").strip()
-#
-#     # Make sure that nickname is alphanumeric chars only
-#     if user_nickname.isalnum():
-#         pass
-#     else:
-#         logger.error("Invalid characters in nickname. Exiting.")
-#         sys.exit(1)
-#
-#     if len(user_nickname) > MAX_NICKNAME_LENGTH:
-#         logger.error(f"Nickname too long. Max length is {MAX_NICKNAME_LENGTH}")
-#         sys.exit(1)
-#
-#     # Check if user_nickname is empty, if it is, kick em out
-#     if not user_nickname:
-#         logger.error("Nickname cannot be empty.")
-#         return.exit(1)
-#
-#     async def main(host: str, port: int, nickname: str) -> None:
-#         # Pass nickname to __init__
-#         client = Client(host, port, nickname=user_nickname)
-#         await client.start()
-#
-#     # Run the main asynchronous entry point
-#     try:
-#         asyncio.run(main("127.0.0.1", 55556, user_nickname))
-#     except KeyboardInterrupt as e:
-#         logger.info("Client stopped.")

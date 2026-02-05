@@ -55,8 +55,6 @@ class Beatrice(App):
     # A TUI messenger named Beatrice
     CSS_PATH = "styling.tcss"
 
-    # timestamp = datetime.now().strftime("%d-%m-%y %H:%M:%S")
-
     def compose(self) -> ComposeResult:
         yield Container(
             Label(
@@ -209,7 +207,6 @@ class Beatrice(App):
                     # start process to look at queue
                     self.processor_task = self.run_worker(self.process_events())
 
-                    # await self.update_online_users_display()
             # ---/
 
         # If the input is a message, send it by calling send_message method from client.py
@@ -294,8 +291,6 @@ class Beatrice(App):
                         )
                     )
 
-                    # await self.update_online_users_display()
-
                 # if the event type is dir notify the users how many people are connected
                 elif event_type == "dir":
 
@@ -308,8 +303,6 @@ class Beatrice(App):
                         )
                     )
 
-                    # await self.update_online_users_display()
-
                 # if event type is leave packet notify the users who left the chat
                 elif event_type == "leave_packet":
 
@@ -321,8 +314,6 @@ class Beatrice(App):
                             classes="leave_packet",
                         )
                     )
-
-                    # await self.update_online_users_display()
 
                 elif event_type == "self_message_error":
                     chat_log = self.query_one("#chat_log")
@@ -353,30 +344,22 @@ class Beatrice(App):
         # Clear existing items
         online_list.clear()
 
-        # Timeout
-        timeout = 300  # 5 min
-        elapsed = (datetime.now() - self.inactivity_timer).total_seconds()
+        online_list.append(ListItem(Label(f"⭐ {self.nickname} (Me)")))
 
         # Add new items
         for user in users:
-            if elapsed > timeout:
-                # self.notify(
-                #     "You've been logged out for inactivity.",
-                #     severity="warning",
-                #     timeout=15,
-                # )
-                online_list.append(ListItem(Label(f"🟠 {user}")))
-
-            else:
-                online_list.append(ListItem(Label(f"🟢 {user}")))
+            online_list.append(ListItem(Label(f"🟢 {user}")))
 
     async def on_unmount(self):
         if self.client:
+            if self.receiver_task:
+                self.receiver_task.cancel()
+            if self.processor_task:
+                self.processor_task.cancel()
+
             if hasattr(self.client, "writer"):
-                if self.receiver_task:
-                    self.receiver_task.cancel()
-                if self.processor_task:
-                    self.processor_task.cancel()
+                self.client.writer.close()
+                await self.client.writer.wait_closed()
 
 
 if __name__ == "__main__":

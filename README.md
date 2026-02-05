@@ -7,11 +7,9 @@ And, thanks to its custom end-to-end encryption implementation, Beatrice has *ab
 
 ---
 
-## 🚧 Project Status: Educational Prototype
+## 🚧 Project Status: Prototype
 
-**This project is a functional prototype built for my MSc in Computer Science.**
-
-Its primary goal is to demonstrate core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**. Unlike standard chat apps that rely on pre-wrapped TLS libraries, Beatrice implements a custom Hybrid Encryption protocol at the application layer to demonstrate how secure channels are constructed from primitives.
+Its primary goal was to help me learn core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**.
 
 **Current Features:**
 * **🖥️ Modern TUI:** Built with [Textual](https://textual.textualize.io/) for a smooth, mouse-compatible terminal experience.
@@ -23,20 +21,15 @@ Its primary goal is to demonstrate core concepts in **Network Security**, **Asyn
 
 ## 🛡️ Security Model & Limitations
 
-> **Note to Recruiters/Engineers:** This application is an educational implementation of cryptographic protocols.
-
 ### The Architecture
 1.  **RSA Handshake:** Upon connection, clients exchange public keys with the server.
-2.  **AES Session:** Messages are encrypted using AES-GCM (Galois/Counter Mode), ensuring both privacy and integrity.
-3.  **Honest-but-Curious Server:** The server routes encrypted bytes but cannot decrypt the content (assuming no active MITM).
+2.  **AES Session:** Messages are encrypted using AES-GCM, ensuring both privacy and integrity.
+3.  **Simple Server Setup:** The server routes encrypted packets but cannot decrypt the content (assuming no active MITM).
 
 ### 📍 Project Roadmap
-This project is under active development. The following features are next on the agenda to move from "Prototype" to "Production-Ready":
+This project is under active development. The following features are next on the agenda:
 
 * [ ] **Data Persistence:** Currently, chat history is ephemeral and clears when the server restarts. A database (SQLite/PostgreSQL) implementation is planned to store encrypted message blobs.
-* [ ] **Replay Protection:** Implementing timestamped nonces to prevent packet replay attacks.
-* [ ] **Identity Verification:** Adding visual key fingerprints to mitigate Man-in-the-Middle (MITM) attacks (currently relies on Trust-On-First-Use).
-* [ ] **Traffic Padding:** Padding payloads to fixed lengths to prevent metadata/traffic analysis.
 
 ---
 

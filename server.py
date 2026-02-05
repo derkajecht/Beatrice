@@ -42,7 +42,11 @@ class BeatriceServer:
         # asyncio.create_task(self._inactivity_check())
 
         server = await asyncio.start_server(
-            self.handle_client, self.host, self.port, reuse_address=True
+            self.handle_client,
+            self.host,
+            self.port,
+            reuse_address=True,
+            limit=256 * 1024,
         )
 
         async with server:
@@ -224,6 +228,7 @@ class BeatriceServer:
         }
 
         # Create full list of current connected users
+        targets = []
         current_user_list = []
 
         async with self._users_lock:
@@ -231,8 +236,8 @@ class BeatriceServer:
                 # send the dir_packet to the new user
                 if user != new_nickname:
                     current_user_list.append({"n": user, "k": data["key"]})
+                    targets.append(data["writer"])
 
-        # --- Send current connected user info to the newly connected user ---
         # dir_packet structure for reference
         # {
         #   "t": "DIR",            // Type: Directory
@@ -252,31 +257,14 @@ class BeatriceServer:
             "t": "DIR",
             "p": current_user_list,
         }
-
         # send the packet to the new user
         await self._send_packet(writer, dir_packet)
 
-        # --- Broadcast the join_packet to all other connected users ---
         # Info on the recently joined person, to be sent to everyone else. Bosh
 
-        # Join packet structure for reference
-        # {
-        #   "t": "J",              // Type: Join
-        #   "n": "Alice",          // Nickname
-        #   "k": "-----BEGIN..."   // Public Key
-        # }
+        tasks = [self._send_packet(t_writer, join_packet) for t_writer in targets]
 
-        join_packet = {
-            "t": "J",
-            "n": new_nickname,
-            "k": new_key,
-        }
-
-        # Send the join packet to all users except for the most recently joined user
-        async with self._users_lock:
-            for user, data in self.connected_users.items():
-                if user != new_nickname:
-                    await asyncio.gather(self._send_packet(data["writer"], join_packet))
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _message_loop(self, reader, nickname):
         """
@@ -303,28 +291,35 @@ class BeatriceServer:
                 continue
 
             elif message_packet.get("t") == "M":
-                async with self._users_lock:
-                    self.connected_users[nickname]["last_activity"] = datetime.now()
+                # Get recipient data
                 recipient = message_packet.get("r")
                 message_packet["s"] = nickname
 
-                if recipient in self.connected_users:
-                    if recipient != nickname:
-                        try:
-                            await self._send_packet(
-                                self.connected_users[recipient].get("writer"),
-                                message_packet,
-                            )  # send to all
-                        except Exception as e:
-                            logger.error(f"Error: {e}")
-                            pass
+                target_writer = None
+
+                async with self._users_lock:
+                    if recipient in self.connected_users:
+                        # Copy reference to the writer
+                        target_writer = self.connected_users[recipient]["writer"]
+
+                # If the writer is found, send the message packet to it
+                if target_writer:
+                    try:
+                        await self._send_packet(
+                            self.connected_users[recipient].get("writer"),
+                            message_packet,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error: {e}")
+                        pass
                 else:
+                    # Send error packet if the writer is not found
                     error_packet = {
                         "t": "ERR",
-                        "c": f"User '{recipient}' not found or disconnected",
+                        "c": f"User '{recipient}' not found.",
                     }
                     await self._send_packet(
-                        self.connected_users[nickname]["writer"], error_packet
+                        reader._transport.get_protocol()._stream_writer, error_packet
                     )
 
     async def _cleanup(self, nickname):
@@ -350,6 +345,7 @@ class BeatriceServer:
         # Remove user from the connected_user list
         async with self._users_lock:
             del self.connected_users[nickname]
+            logger.info(f"----- Server: {nickname} has disconnected -----")
             print(f"----- Server: {nickname} has disconnected -----")
         # Is this needed for tui or could we use a logging system for the tui to handle???
 
@@ -365,7 +361,9 @@ class BeatriceServer:
         async with self._users_lock:
             for user in list(self.connected_users):
                 try:
-                    target_writer = self.connected_users[user]["writer"]
+                    target_writer: asyncio.StreamWriter = self.connected_users[user][
+                        "writer"
+                    ]
                     await self._send_packet(target_writer, leave_packet)
                 except Exception as e:
                     logger.error(f"Error: {e}")
@@ -379,21 +377,10 @@ class BeatriceServer:
             logger.error(f"Error: {e}")
             pass
 
-    # async def _inactivity_check(self):
-    #     while True:
-    #         await asyncio.sleep(10)
-    #
-    #         timeout = 300  # 5 min
-    #         now = datetime.now()
-    #
-    #         for nickname in list(self.connected_users.keys()):
-    #             last_active = self.connected_users[nickname]["last_activity"]
-    #             elapsed = (now - last_active).total_seconds()
-    #
-    #             if elapsed > timeout:
-    #                 pass
-    #                 # self._cleanup(nickname)
 
+# TODO: Feature that sets user status to "online" or "away" depending on the time they last sent a packet to the server
+# This will require the client sending a packet to the server whenever they send a message or move the mouse.
+# If the server receives that packet before a timeout length, a green circle will appear next to their name in the ui. If not, it will set them to away
 
 # --- Execution ---
 if __name__ == "__main__":
@@ -405,4 +392,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(server.start_server())
     except KeyboardInterrupt:
+        logger.info("Server stopped.")
         print("Server stopped.")
