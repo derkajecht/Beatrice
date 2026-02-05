@@ -7,33 +7,33 @@ And, thanks to its custom end-to-end encryption implementation, Beatrice has *ab
 
 ---
 
-## 🚧 Project Status: Prototype
+## Project Status: Prototype
 
 It's primary goal was to help me learn core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**.
 
 **Current Features:**
-* **🖥️ Modern TUI:** Built with [Textual](https://textual.textualize.io/) for a smooth, mouse-compatible terminal experience.
-* **⚡ Asynchronous:** Fully non-blocking architecture using Python's `asyncio`.
-* **🔒 Hybrid Encryption:** Secures messages using **RSA-2048** for key exchange and **AES-GCM** for message confidentiality and integrity.
-* **💬 Real-time Messaging:** Instant messaging with live online user tracking.
+* **Modern TUI:** Built with [Textual](https://textual.textualize.io/) for a smooth, mouse-compatible terminal experience.
+* **Asynchronous:** Fully non-blocking architecture using Python's `asyncio`.
+* **Hybrid Encryption:** Secures messages using **RSA-2048** for key exchange and **AES-GCM** for message confidentiality and integrity.
+* **Real-time Messaging:** Instant messaging with live online user tracking.
 
 ---
 
-## 🛡️ Security Model & Limitations
+## Security Model & Limitations
 
 ### The Architecture
 1.  **RSA Handshake:** Upon connection, clients exchange public keys with the server.
 2.  **AES Session:** Messages are encrypted using AES-GCM, ensuring both privacy and integrity.
 3.  **Simple Server Setup:** The server routes encrypted packets but cannot decrypt the content (assuming no active MITM).
 
-### 📍 Project Roadmap
+### Project Roadmap
 This project is under active development. The following features are next on the agenda:
 
 * [ ] **Data Persistence:** Currently, chat history is ephemeral and clears when the server restarts. A database (SQLite/PostgreSQL) implementation is planned to store encrypted message blobs.
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
 This project requires **Python 3.10+**.
 
