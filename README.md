@@ -7,6 +7,12 @@ And, thanks to its custom end-to-end encryption implementation, Beatrice has *ab
 
 ---
 
+## Some Screenshots
+
+![login_page](main_page.png)
+
+---
+
 ## Project Status: Prototype
 
 It's primary goal was to help me learn core concepts in **Network Security**, **Asynchronous I/O**, and **Cryptography**.

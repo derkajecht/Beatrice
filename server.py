@@ -141,7 +141,6 @@ class BeatriceServer:
                 return None
 
             if packet is None:
-                # prevents busy waiting and gives other tasks a chance to run
                 await asyncio.sleep(0.1)
                 continue
 
@@ -164,7 +163,7 @@ class BeatriceServer:
                     return None
 
                 # Check that the data packet contains the key information.
-                if _key is None or not _key.startswith("-----BEGIN PUBLIC KEY"):
+                if not _key or not _key.startswith("-----BEGIN PUBLIC KEY"):
                     error_msg = "Invalid public key."
                     err_packet = {"t": "ERR", "c": error_msg}
                     await self._send_packet(writer, err_packet)
@@ -178,6 +177,7 @@ class BeatriceServer:
                         serialization.load_pem_public_key,
                         _key.encode("utf-8"),
                     )
+
                 # If it does not pass, ValueError is raised, indicating that the public key is invalid.
                 except Exception as e:
                     error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
@@ -186,8 +186,8 @@ class BeatriceServer:
                     return None
 
                 try:
-                    # Check to make sure this is a nickname that isn't already in use. If it is, append a number to make it unique.
-                    final_nickname = None # create empty var to store final nickname
+                    # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
+                    final_nickname = _nickname
                     if _nickname in self.connected_users:
                         suffix = random.randint(
                             NICKNAME_SUFFIX_MIN, NICKNAME_SUFFIX_MAX
