@@ -31,6 +31,14 @@ This project is under active development. The following features are next on the
 
 * [ ] **Data Persistence:** Currently, chat history is ephemeral and clears when the server restarts. A database (SQLite/PostgreSQL) implementation is planned to store encrypted message blobs.
 
+* [ ] **Online User List:** This currently has a static 🟢 when other users are connected. I have plans to implement user status, which will set users to 🟠 if they are inactive for a certain period of time. Would need to have packets sent from the server, and then you could do a mouse or trigger event from the textual client that sends a packet back to the server if a user is still active... or something like that.
+
+* [ ] **Make The UI Great (Again):** I'm not much of a designer. If the backend works and the UI can serve the backend, then I'm happy. I am aware it's super basic at the moment.
+
+* [ ] **Add Vim Keymaps:** I use nvim btw.
+
+* [ ] **Optimisation:** Some of the iterations through sending packets to connected users run in O(n). I would want to explore ways to speed this up.
+
 ---
 
 ## How to Run
@@ -68,3 +76,7 @@ I often wonder if she's listening, or just waiting until her next meal. She's pr
 And that's the bit that got me. Encryption dog.
 
 I speak to her, but she's got no idea what I'm saying. This chat app is the same. It happens entirely within your terminal, and it has absolutely no idea what you are talking about.
+
+---
+
+Collaboration warmly welcomed 💗

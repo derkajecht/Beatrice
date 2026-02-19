@@ -1,35 +1,39 @@
 Screen {
     background: #000000;
 }
+
 #login_screen {
     width: 100%;
     height: 15%;
-    align: center middle; /* This centers the child (the Input) */
+    align: center middle;
+    text-align: center;
 }
 
 #login_title_container {
     width: 100%;
-    height: 50%;
-    align: center bottom; /* This centers the Child (the Input) */
+    height: 25%;
+    align: center top;
     text-style: bold;
     text-align: center;
 }
 
 #ascii_dog {
-    width: 1fr;
     align: center bottom;
     text-align: center;
     text-opacity: 20%;
 }
 
 #login_title_text {
-    align: center top;
+    align: center middle;
 }
 
 .nickname_input {
-    width: 50%; /* Or specific width like 50 */
+    width: 50%;
+    height: 75%;
     border: round white;
     background: transparent;
+    text-align: center;
+    # align: center;
 }
 
 /* --- UTILITY --- */
@@ -95,7 +99,8 @@ Screen {
 }
 
 /* The Row (Invisible container that spans full width) */
-.message_row {
+.message_row,
+.dm_message_row {
     width: 100%;
     height: auto;
     # padding: 1; /* Space between messages */
@@ -140,6 +145,6 @@ Screen {
 .join_message {
     width: 100%;
     text-align: center;
-    color: $text-muted;
+    color: #6e6a86;
     padding: 1;
 }

@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import logging
+import argparse
 from datetime import datetime
 from cryptography.hazmat.primitives import serialization
 
@@ -46,7 +47,7 @@ class BeatriceServer:
             self.host,
             self.port,
             reuse_address=True,
-            limit=256 * 1024,
+            # limit=256 * 1024,
         )
 
         async with server:
@@ -61,7 +62,7 @@ class BeatriceServer:
         if not nickname:
             writer.close()
             await writer.wait_closed()
-            return
+            return None
 
         try:
             # 2. Synchronise
@@ -140,6 +141,7 @@ class BeatriceServer:
                 return None
 
             if packet is None:
+                # prevents busy waiting and gives other tasks a chance to run
                 await asyncio.sleep(0.1)
                 continue
 
@@ -162,7 +164,7 @@ class BeatriceServer:
                     return None
 
                 # Check that the data packet contains the key information.
-                if not _key.startswith("-----BEGIN PUBLIC KEY"):
+                if _key is None or not _key.startswith("-----BEGIN PUBLIC KEY"):
                     error_msg = "Invalid public key."
                     err_packet = {"t": "ERR", "c": error_msg}
                     await self._send_packet(writer, err_packet)
@@ -176,7 +178,6 @@ class BeatriceServer:
                         serialization.load_pem_public_key,
                         _key.encode("utf-8"),
                     )
-
                 # If it does not pass, ValueError is raised, indicating that the public key is invalid.
                 except Exception as e:
                     error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
@@ -185,9 +186,9 @@ class BeatriceServer:
                     return None
 
                 try:
-                    # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
-                    final_nickname = _nickname
-                    if final_nickname in self.connected_users:
+                    # Check to make sure this is a nickname that isn't already in use. If it is, append a number to make it unique.
+                    final_nickname = None # create empty var to store final nickname
+                    if _nickname in self.connected_users:
                         suffix = random.randint(
                             NICKNAME_SUFFIX_MIN, NICKNAME_SUFFIX_MAX
                         )
@@ -197,8 +198,6 @@ class BeatriceServer:
                             {  # Store this in the connected_users dict
                                 "writer": writer,
                                 "key": _key,
-                                "last_activity": datetime.now(),
-                                "status": "active",
                             }
                         )
                     self.latest_nickname = final_nickname
@@ -278,6 +277,7 @@ class BeatriceServer:
             "t": "M",          # Type: Message
             "r": "recipient",  # Who is it for? (e.g., "Bob" or "ALL")
             "m": "..."         # The Message Content (Encrypted String)
+            "s": "sender"      # The sender of the message
         }
 
         """
@@ -310,7 +310,7 @@ class BeatriceServer:
                             message_packet,
                         )
                     except Exception as e:
-                        logger.error(f"Error: {e}")
+                        logger.error(f"Error target writer not found: {e}")
                         return
                 else:
                     # Send error packet if the writer is not found
@@ -346,8 +346,7 @@ class BeatriceServer:
         async with self._users_lock:
             del self.connected_users[nickname]
             logger.info(f"----- Server: {nickname} has disconnected -----")
-            print(f"----- Server: {nickname} has disconnected -----")
-        # Is this needed for tui or could we use a logging system for the tui to handle???
+            # print(f"----- Server: {nickname} has disconnected -----")
 
         # Notify other users by sending the leave packet
         # Leave packet structure for reference
@@ -357,13 +356,12 @@ class BeatriceServer:
         # }
         leave_packet = {"t": "L", "n": nickname}  # Type: Leave  # Who is leaving
 
+        # TODO: write better algo to send this faster than O(1) - not sure its possible
         # Iterate through the connected user list and send them the leave packet
         async with self._users_lock:
-            for user in list(self.connected_users):
+            for user in self.connected_users.keys():
+                target_writer = self.connected_users[user]["writer"]
                 try:
-                    target_writer: asyncio.StreamWriter = self.connected_users[user][
-                        "writer"
-                    ]
                     await self._send_packet(target_writer, leave_packet)
                 except Exception as e:
                     logger.error(f"Error: {e}")
@@ -386,11 +384,41 @@ class BeatriceServer:
 # --- Execution ---
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser(
+        prog="Beatrice Server",
+        description="Start a Beatrice server",
+        add_help=False,
+        conflict_handler="resolve",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="IP to bind the server to (default: '0.0.0.0')",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=55556,
+        help="Port to bind the server to (default: 55556)",
+    )
+
+    parser.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        default=argparse.SUPPRESS,
+        help="Show this help message",
+    )
+
+    args = parser.parse_args()
+
     # Pass host and port to __init__
-    server = BeatriceServer("0.0.0.0", 55556)
+    server = BeatriceServer(args.host, args.port)
 
     # Run the main async entry point
     try:
+        # asyncio.run(server.start_server(args.host, args.port))
         asyncio.run(server.start_server())
     except KeyboardInterrupt:
         logger.info("Server stopped.")

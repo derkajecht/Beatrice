@@ -5,6 +5,7 @@ import asyncio
 import json
 import hashlib
 import secrets
+import sys
 
 from typing import Union, List, Tuple, Any, Optional
 from collections import deque
@@ -34,7 +35,6 @@ MAX_PACKET_LENGTH = 256 * 1024  # 256kb (should be large enough)
 RSA_KEY_SIZE = 2048
 AES_KEY_SIZE = 256
 TARGET_PAYLOAD_SIZE = 4096
-
 
 class Client:
     def __init__(self, host: str, port: int, nickname: str) -> None:
@@ -233,7 +233,7 @@ class Client:
         # return the first 4 characters and last 4 characters of sha256 hash
         return f"{sha[:4]}:{sha[4:8]}"
 
-    async def check_handshake(self) -> bool:
+    async def check_handshake(self) -> bool | None:
         """
         Async method to check the client handshake response. If successful, the client public key is stored in the Client class object so messages can be sent to and from the connected client(s).
 
@@ -299,11 +299,21 @@ class Client:
                         await self.event_queue.put(
                             (
                                 "dir",
-                                f"Connected. You are chatting with {final_connected_users_list}.",
+                                f"Joined the room! \n You are chatting with {final_connected_users_list}.",
                             )
                         )
+                    else:
+                        await self.event_queue.put(
+                            (
+                                "dir",
+                                f"You are the fist person to join the server.",
+                            )
+                        )
+
+                    # Set connected status to true and return true to show a successful handshake
                     self.connected = True
                     return True
+
             except Exception as e:
                 logger.error(f"Error while receiving message. {e}")
 
@@ -510,8 +520,8 @@ class Client:
         # }
 
         # if the user enters quit or exit, stop the program
-        if content.strip().lower() in ["exit", "quit"]:
-            await self.event_queue.put(("status", "You have disconnected."))
+        if content.strip().lower() in ["exit", "quit", ":q"]:
+            sys.exit(0)
 
         # Assume that the message is being sent to everyone initially
         recipient = "ALL"
@@ -540,7 +550,7 @@ class Client:
                     return
 
                 # Update the content varible with the message content
-                content = parts[1].strip()
+                content = f"@{parts[1].strip()}"
 
             else:  # If message doesn't follow the correct syntax let the user know
                 await self.event_queue.put(
