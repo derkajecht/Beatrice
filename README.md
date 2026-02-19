@@ -49,7 +49,7 @@ This project requires **Python 3.10+**.
 Clone the repository and install the dependencies (Textual and Cryptography).
 
 ```bash
-git clone [https://github.com/derkajecht/beatrice.git](https://github.com/derkajecht/beatrice.git)
+git clone https://github.com/derkajecht/beatrice.git
 cd beatrice
 pip install textual cryptography
 ```
