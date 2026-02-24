@@ -120,7 +120,7 @@ if __name__ == "__main__":
     print(f"Running benchmark ({iterations} iterations)...")
 
     crypto_time = timeit.timeit(bench_cryptography_rsa_aes, number=iterations)
-    print(f"cryptography:   {crypto_time:.4f} seconds")
+    print(f"Cryptography:   {crypto_time:.4f} seconds")
 
     pycrypto_time = timeit.timeit(bench_pycryptodome_rsa_aes, number=iterations)
     print(f"PyCryptodome:  {pycrypto_time:.4f} seconds")
