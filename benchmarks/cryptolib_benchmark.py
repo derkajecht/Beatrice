@@ -3,6 +3,9 @@ import os
 import timeit
 
 # All crypto imports
+#PyNaCl
+import nacl.secret
+import nacl.utils
 # /--- PyCryptodome
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Hash import SHA256
@@ -15,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import (RSAPrivateKey,
                                                            RSAPublicKey)
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from nacl.public import Box, PrivateKey
 
 
 def bench_cryptography_rsa_aes():
@@ -112,8 +116,45 @@ def bench_pycryptodome_rsa_aes():
     aes_cipher_dec = AES.new(decrypted_aes_key, AES.MODE_GCM, nonce=iv_nonce)
     decrypted_content_bytes = aes_cipher_dec.decrypt_and_verify(ct, tag)
 
+def bench_pynacl():
+
+    # Alice keys
+    alice_priv = PrivateKey.generate()
+    alice_pub = alice_priv.public_key
+    # Bob keys
+    bob_priv = PrivateKey.generate()
+    bob_pub = bob_priv.public_key
+
+    # Key exchange
+    alice_box = Box(alice_priv, bob_pub)
+    shared_key = alice_box.shared_key()
+
+    # Message encryption
+    aead_box = nacl.secret.Aead(shared_key)
+
+    # Dummy json packet
+    dummy_payload = {
+        "sender": "Bob",
+        "content": "Hello, world!",
+    }
+    dummy_payload_packet = json.dumps(dummy_payload).encode("utf-8")
+
+    # Encrypted box with message inside - sent from Alice
+    encrypted_packet = aead_box.encrypt(dummy_payload_packet)
+
+    # Bob box creation to decrypt the received box from Alice
+    bob_box = Box(bob_priv, alice_pub)
+    bob_shared_key = bob_box.shared_key()
+
+    # Create aead instance using the shared key
+    bob_aead = nacl.secret.Aead(bob_shared_key)
+
+    # Decrypt encrypted packet using bobs box
+    decrypted_content = bob_aead.decrypt(encrypted_packet)
+
+
 if __name__ == "__main__":
-    # Running 100 iterations for a more stable benchmark average
+    # Running 10 iterations for a more stable benchmark average
     iterations = 10
 
     print(f"Running benchmark ({iterations} iterations)...")
@@ -124,4 +165,6 @@ if __name__ == "__main__":
     pycrypto_time = timeit.timeit(bench_pycryptodome_rsa_aes, number=iterations)
     print(f"PyCryptodome:  {pycrypto_time:.4f} seconds")
 
+    pycrypto_time = timeit.timeit(bench_pynacl, number=iterations)
+    print(f"PyNaCl:  {pycrypto_time:.4f} seconds")
 

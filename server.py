@@ -1,16 +1,21 @@
+import argparse
 import asyncio
 import json
-import random
 import logging
-import argparse
+import random
 from datetime import datetime
+
+import uvicorn
 from cryptography.hazmat.primitives import serialization
+from fastapi import FastAPI, WebSocket
 
 # Logger setup
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+app = FastAPI()
 
 # Constants
 NICKNAME_SUFFIX_MIN = 100
@@ -39,8 +44,6 @@ class BeatriceServer:
         self._users_lock = asyncio.Lock()
 
     async def start_server(self):
-        # Start the bg task that checks for inactive users
-        # asyncio.create_task(self._inactivity_check())
 
         server = await asyncio.start_server(
             self.handle_client,
@@ -394,7 +397,7 @@ if __name__ == "__main__":
         "--host",
         type=str,
         default="0.0.0.0",
-        help="IP to bind the server to (default: '0.0.0.0')",
+        help="IP to bind the server to (default: \"0.0.0.0\")",
     )
     parser.add_argument(
         "--port",
@@ -413,13 +416,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Pass host and port to __init__
-    server = BeatriceServer(args.host, args.port)
-
     # Run the main async entry point
     try:
         # asyncio.run(server.start_server(args.host, args.port))
-        asyncio.run(server.start_server())
+        uvicorn.run(app, host=args.host, port=args.port)
     except KeyboardInterrupt:
         logger.info("Server stopped.")
         print("Server stopped.")

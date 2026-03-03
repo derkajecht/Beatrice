@@ -1,21 +1,21 @@
-import os
-import logging
-import base64
 import asyncio
-import json
+import base64
 import hashlib
+import json
+import logging
+import os
 import secrets
 import sys
-
-from typing import Union, List, Tuple, Any, Optional
 from collections import deque
+from typing import Any, List, Optional, Tuple, Union
 
-# Cryptography imports
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
+from cryptography.hazmat.primitives import hashes, serialization
+# Cryptography imports
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import (RSAPrivateKey,
+                                                           RSAPublicKey)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # Type definitions
 Event = Union[
@@ -449,6 +449,8 @@ class Client:
 
                 # Skip invalid messages
                 except Exception as e:
+                    error_message = f"Error decrypting message {e}"
+                    await self.event_queue.put(("message", error_message))
                     logger.error(f"Error decrypting message: {e}")
                     continue
 
