@@ -1,10 +1,14 @@
+import argparse
 import asyncio
 import json
-import random
 import logging
-import argparse
+import random
+from base64 import encode
 from datetime import datetime
+
+import uvicorn
 from cryptography.hazmat.primitives import serialization
+from fastapi import FastAPI, WebSocket
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -12,290 +16,121 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Constants
 NICKNAME_SUFFIX_MIN = 100
 NICKNAME_SUFFIX_MAX = 999
-HANDSHAKE_TIMEOUT = 5
 
+app = FastAPI()
 
-class BeatriceServer:
-    def __init__(self, host: str, port: int) -> None:
-        self.host: str = host
-        self.port: int = port
+class ConnectionManager:
+    """ Handles client connect and disconnect. """
+    def __init__(self):
+        # Dict of current active users - "jordan": {"ws": 1234, "pk": "-----BEGIN PUBLIC KEY..."}
+        self.active_connections: dict[str, dict] = {}
 
-        # Data Structure Reference:
-        # self.connected_users = {
-        #    "Alice": {
-        #        "writer": <asyncio.StreamWriter>,
-        #        "key": "-----BEGIN PUBLIC KEY..."
-        #    },
-        #    "Jordan": {
-        #        "writer": <asyncio.StreamWriter>,
-        #        "key": "-----BEGIN PUBLIC KEY..."
-        #    },
-        # }
-        self.connected_users = {}
+    async def connect(self, nickname, websocket, public_key):
+        """ Start websockt and add user to active connections. """
+        # Accept websocket connection
+        await websocket.accept()
+        # Add information to the dict to store user connection data
+        self.active_connections[nickname] = {"ws": websocket, "pk": public_key}
+        logger.info(f"{nickname} joined the server")
 
-        self._users_lock = asyncio.Lock()
+    async def disconnect(self, nickname):
+        """ Remove user from active connections. """
+        self.active_connections.pop(nickname, None)
+        logger.info(f"{nickname} left the server")
 
-    async def start_server(self):
-        # Start the bg task that checks for inactive users
-        # asyncio.create_task(self._inactivity_check())
+    async def broadcast_message(self, message_payload: dict, exclude = None):
+        """ Send message to all connected users. """
+        for nickname, data in self.active_connections.items():
+            if nickname != exclude:
+                await data["ws"].send_json(message_payload)
 
-        server = await asyncio.start_server(
-            self.handle_client,
-            self.host,
-            self.port,
-            reuse_address=True,
-            # limit=256 * 1024,
-        )
+    async def dm_message(self, message_payload, target):
+        """ Send message to specific user. """
+        if target in self.active_connections:
+            dm_target = self.active_connections[target]["ws"]
+            await dm_target.send_json(message_payload)
+            return True
+        return False
 
-        async with server:
-            await server.serve_forever()
+manager = ConnectionManager()
 
-    async def handle_client(self, reader, writer):
-        """
-        This will handle most of the server side logic and make sure everything is called in the right order.
-        """
-        # 1. Perform handshake
-        nickname = await self._handshake(reader, writer)
-        if not nickname:
-            writer.close()
-            await writer.wait_closed()
-            return None
+@app.websocket("/ws")
+async def beatrice(websocket: WebSocket):
+    try:
+        # Listen for incoming json from the client
+        packet = await websocket.receive_json()
 
+        # if the type of packet is not handshake, return and close the connection
+        if packet.get("t") != "H":
+            err_packet = {"t": "ERR", "c": "Invalid handshake"}
+            await websocket.send_json(err_packet)
+            await websocket.close(0, "Invalid handshake from client.")
+            return
+
+        # Extract from packet
+        _nickname = packet.get("n")  # Nickname
+        _key = packet.get("k")  # Public key
+
+        # If this passes, the public key is valid
         try:
-            # 2. Synchronise
-            key = self.connected_users[nickname]["key"]
-            await self._synchronise(writer, nickname, key)
+            serialization.load_pem_public_key(_key.encode("utf-8"))
+        except Exception:
+            err_packet = {"t": "ERR", "c": "Invalid PEM public key."}
+            await websocket.send_json(err_packet)
+            await websocket.close()
+            return
 
-            # 3. Init message loop
-            await self._message_loop(reader, nickname)
+        # check for duplicate nicknames. adds random suffix to the end to avoid dups
+        if _nickname in manager.active_connections:
+            suffix = random.randint(NICKNAME_SUFFIX_MIN, NICKNAME_SUFFIX_MAX)
+            _nickname = f"{_nickname}#{suffix}"
 
-        except Exception as e:
-            logger.error(f"Error: {e}")
+        # Make connection via websocket
+        await manager.connect(_nickname, websocket, _key)
 
-        finally:
-            # 4. Cleanup on disconnect
-            await self._cleanup(nickname)
+        # Send dir packet
+        # Get current active user list
+        current_users = [{"n": n, "k": d["pk"]} for n, d in manager.active_connections.items() if n != _nickname]
+        # create dir packet
+        dir_packet = {"t": "DIR", "p": current_users}
+        await websocket.send_json(dir_packet)
 
-    async def _receive_packet(self, reader) -> None | dict[str, str]:
-        """Method that listens for packets and correctly stops the server if the client leaves"""
-        try:
-            message: bytes = await reader.readline()
-        except Exception as e:
-            logger.error(f"Socket read error: {e}")
-            raise e  # Re-raise so the loop knows to stop
+        # Send join packet
+        join_packet = {"t": "J", "n": _nickname, "k": _key}
+        await manager.broadcast_message(join_packet, exclude=_nickname)
 
-        if message == b"":
-            # EOF received. Raise exception to break the loop in the caller.
-            raise ConnectionResetError("Client disconnected")
-
-        if message == b"\n":
-            await asyncio.sleep(0.1)
-            return None
-
-        try:
-            packet = json.loads(message.decode("utf-8"))
-            return packet
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON {e}")
-            return None
-
-    async def _send_packet(self, writer, packet):
-        """
-        1. Encodes the packet to JSON bytes (with newline).
-        2. Writes it to the specific writer.
-        3. Drains the writer to ensure it sent.
-        Safety: Wrap in try/except to ignore broken pipes.
-        """
-        try:
-            writer.write((json.dumps(packet) + "\n").encode("utf-8"))
-            await writer.drain()
-
-        # If sending fails, the socket is likely closed
-        except Exception as e:
-            logger.error(f"Error: {e}")
-
-    async def _handshake(self, reader, writer):
-        """
-        Read Line: Get the first packet.
-
-        Parse JSON: If it's not JSON, kick them out.
-
-        Check if we've received the correct packet type "H". If not, do not continue.
-
-        Extract Key: Does the k (key) field exist?
-
-        Validate Key: Does it look like a valid PEM key? (Starts with -----BEGIN PUBLIC KEY...).
-
-        Success: Only then do you look at the nickname and let them in.
-        """
-        while True:
-            try:
-                packet = await asyncio.wait_for(
-                    self._receive_packet(reader), timeout=HANDSHAKE_TIMEOUT
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Handshake timed out")
-                return None
-
-            if packet is None:
-                await asyncio.sleep(0.1)
-                continue
-
-            elif packet.get("t") == "H":
-                # Get the values from the decoded json packet
-                _nickname = packet.get("n")  # Nickname
-                _key = packet.get("k")  # Public key
-
-                # Checks to see that all fields are not none, if any data is missing, send the error packet to the user.
-                # Error packet structure for reference
-                # {
-                #   "t": "ERR",            // Type: Error
-                #   "c": "User not found"  // Content: Description of the error
-                # }
-
-                if not all([_nickname, _key]):
-                    error_msg = "Missing required handshake packet data fields."  # Custom error message to send on failure
-                    err_packet = {"t": "ERR", "c": error_msg}
-                    await self._send_packet(writer, err_packet)
-                    return None
-
-                # Check that the data packet contains the key information.
-                if not _key or not _key.startswith("-----BEGIN PUBLIC KEY"):
-                    error_msg = "Invalid public key."
-                    err_packet = {"t": "ERR", "c": error_msg}
-                    await self._send_packet(writer, err_packet)
-                    return None
-
-                loop = asyncio.get_running_loop()
-                try:
-                    # If this passes, the key is mathematically valid
-                    await loop.run_in_executor(
-                        None,
-                        serialization.load_pem_public_key,
-                        _key.encode("utf-8"),
-                    )
-
-                # If it does not pass, ValueError is raised, indicating that the public key is invalid.
-                except Exception as e:
-                    error_msg = "Invalid public key. Invalid format or encoding. Please provide a valid PEM-encoded public key."
-                    await self._send_packet(writer, {"t": "ERR", "c": error_msg})
-                    logger.error(f"Error (likely an invalid public key): {e}")
-                    return None
-
-                try:
-                    # Check to make sure this is a nickname that isn't already in use. If it is, append a number and generate another one until you find a non-used name.
-                    final_nickname = _nickname
-                    if _nickname in self.connected_users:
-                        suffix = random.randint(
-                            NICKNAME_SUFFIX_MIN, NICKNAME_SUFFIX_MAX
-                        )
-                        final_nickname = f"{_nickname}#{suffix}"
-                    async with self._users_lock:
-                        self.connected_users[final_nickname] = (
-                            {  # Store this in the connected_users dict
-                                "writer": writer,
-                                "key": _key,
-                            }
-                        )
-                    self.latest_nickname = final_nickname
-                    return final_nickname
-                except Exception as e:
-                    logger.error(f"Error setting nickname. {e}")
-                    return None
-
-            else:  # If the packet type doesn't begin with "H" which indicates its a handshake request.
-                error_msg = "Error: Received non-handshake packet."  # Set custom error message on failure
-                await self._send_packet(writer, {"t": "ERR", "c": error_msg})
-                return None
-
-    async def _synchronise(self, writer, new_nickname, new_key):
-        """
-        Action A: Sends the connected_users list to the new person incl public key.
-        Action B: Loops through connected_users and sends a USER_JOINED packet to everyone else.
-
-        will need to decode or encode these before sending
-        """
-
-        # Info on the recently joined person, to be sent to everyone else. Bosh
-        join_packet = {
-            "t": "J",
-            "n": new_nickname,
-            "k": new_key,
-        }
-
-        # Create full list of current connected users
-        targets = []
-        current_user_list = []
-
-        async with self._users_lock:
-            for user, data in self.connected_users.items():
-                # send the dir_packet to the new user
-                if user != new_nickname:
-                    current_user_list.append({"n": user, "k": data["key"]})
-                    targets.append(data["writer"])
-
-        # dir_packet structure for reference
-        # {
-        #   "t": "DIR",            // Type: Directory
-        #   "p": [                 // Payload: List of user objects
-        #     {
-        #       "n": "Bob",        // Nickname
-        #       "k": "-----BEGIN..." // Public Key
-        #     },
-        #     {
-        #       "n": "Charlie",
-        #       "k": "-----BEGIN..."
-        #     }
-        #   ]
-        # }
-
-        dir_packet = {
-            "t": "DIR",
-            "p": current_user_list,
-        }
-        # send the packet to the new user
-        await self._send_packet(writer, dir_packet)
-
-        # Info on the recently joined person, to be sent to everyone else. Bosh
-
-        tasks = [self._send_packet(t_writer, join_packet) for t_writer in targets]
-
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def _message_loop(self, reader, nickname):
-        """
-        This is an infinite loop which will continuously listen for messages and dispatch messages to the intended recipient(s).
-
-        Make sure that a delimiter is used so the whole message is read properly asyncio.StreamReader()
-
-        Handle Disconnection: If a client disconnects, make sure to remove them from connected_users list.
-
-        {
-            "t": "M",          # Type: Message
-            "r": "recipient",  # Who is it for? (e.g., "Bob" or "ALL")
-            "m": "..."         # The Message Content (Encrypted String)
-            "s": "sender"      # The sender of the message
-        }
-
-        """
+        # MESSAGE LOOP
         while True:  # continuously listen for incoming messages
-            try:
-                message_packet = await self._receive_packet(reader)
-            except Exception:
-                break
+            message_packet = await websocket.receive_json()
 
-            if message_packet is None:
-                continue
+            if message_packet.get("t") == "M":
+                # DM LOGIC ---
+                if message_packet.get("r") != "ALL":
+                    # Get recipient data
+                    recipient = message_packet.get("r")
+                    if recipient not in manager.active_connections:
+                        logger.warning(f"{recipient} not found.")
 
-            elif message_packet.get("t") == "M":
-                # Get recipient data
-                recipient = message_packet.get("r")
-                message_packet["s"] = nickname
+                    # Sign the message
+                    message_packet["s"] = _nickname
 
-                target_writer = None
+                    success = await manager.dm_message(message_packet, recipient)
+                    if not success:
+                        err_packet = {"t": "ERR", "c": f"Error sending message to {recipient}"}
+                        await websocket.send_json(err_packet)
+                success = await manager.broadcast_message(message_packet, exclude=_nickname)
+                if not success:
+                    err_packet = {"t": "ERR", "c": f"Error broadcasting message"}
+                    await websocket.send_json(err_packet)
+
+                # TODO: Finish rewriting logic over to fastapi
+                # Need to add in cleanup method when a user disconnects
+                # Add in error handling
+
+
+
 
                 async with self._users_lock:
                     if recipient in self.connected_users:
@@ -375,12 +210,6 @@ class BeatriceServer:
             logger.error(f"Error: {e}")
             pass
 
-
-# TODO: Feature that sets user status to "online" or "away" depending on the time they last sent a packet to the server
-# This will require the client sending a packet to the server whenever they send a message or move the mouse.
-# If the server receives that packet before a timeout length, a green circle will appear next to their name in the ui. If not, it will set them to away
-
-
 # --- Execution ---
 if __name__ == "__main__":
 
@@ -413,13 +242,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Pass host and port to __init__
-    server = BeatriceServer(args.host, args.port)
-
     # Run the main async entry point
     try:
         # asyncio.run(server.start_server(args.host, args.port))
-        asyncio.run(server.start_server())
+        uvicorn.run(app, host=args.host, port=args.port)
     except KeyboardInterrupt:
         logger.info("Server stopped.")
         print("Server stopped.")
