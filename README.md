@@ -10,7 +10,7 @@ And, thanks to its custom end-to-end encryption implementation, Beatrice has *ab
 ## Some Screenshots
 
 ![login_page](/assets/main_page.png)
-![chat_page](/assats/chat_page.png)
+![chat_page](/assets/chat_page.png)
 
 ---
 
