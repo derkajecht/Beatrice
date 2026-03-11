@@ -9,7 +9,7 @@ from textual.containers import Container, VerticalScroll
 from textual.widgets import Input, Label, ListItem, ListView
 
 # import client class
-from client import Client
+from src.client import Client
 
 # Constants
 SERVER_HOST = "localhost"
