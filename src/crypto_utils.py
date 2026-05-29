@@ -10,19 +10,23 @@ def check_or_create_keys():
 
     if sys.platform == "win32":
         # Windows
-        private_key_path = os.path.expandvars(r"%APPDATA%\beatrice\private_key.pem")
+        private_key_path = os.path.expandvars(
+            r"%APPDATA%\beatrice\private_key.pem")
     elif sys.platform == "darwin":
         # macOS
-        private_key_path = os.path.expanduser("~/Library/Application Support/beatrice/private_key.pem")
+        private_key_path = os.path.expanduser(
+            "~/Library/Application Support/beatrice/private_key.pem")
     else:
         # Linux and other Unix
-        private_key_path = os.path.expanduser("~/.config/beatrice/private_key.pem")
+        private_key_path = os.path.expanduser(
+            "~/.config/beatrice/private_key.pem")
 
     # Check if the private key file exists
     if os.path.exists(private_key_path):
         # Load RSA private key
         with open(private_key_path, "rb") as f:
-            private_key = serialization.load_pem_private_key(f.read(), password=None)
+            private_key = serialization.load_pem_private_key(
+                f.read(), password=None)
 
     else:
         private_key = rsa.generate_private_key(
@@ -41,11 +45,11 @@ def check_or_create_keys():
 
     return public_key, private_key
 
+
 def get_public_key_bytes(public_key):
     public_key_str = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
+    )
     # /--- Serialize public key for transmission
     return public_key_str.decode("utf-8")
-

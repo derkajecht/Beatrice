@@ -23,7 +23,7 @@ from .crypto_utils import check_or_create_keys, get_public_key_bytes
 # Logger setup
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-   filemode="w", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    filemode="w", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 # Constants
@@ -31,6 +31,7 @@ MAX_PACKET_LENGTH = 256 * 1024  # 256kb (should be large enough)
 RSA_KEY_SIZE = 2048
 AES_KEY_SIZE = 256
 TARGET_PAYLOAD_SIZE = 4096
+
 
 class Client:
     def __init__(self, host: str, port: int, nickname: str):
@@ -91,14 +92,15 @@ class Client:
                 # Check status codes from the server;
                 # 200 - Success, pass user to websocket connection
                 if response.status_code != 200:
-                    logger.error(f"Login failed with status: {response.status_code}")
+                    logger.error(
+                        f"Login failed with status: {
+                            response.status_code}")
                     await client.aclose()
                     return
                 await self.connect_to_server()
                 logger.info("Handshake successful. Starting websocket.")
             except httpx.HTTPStatusError as e:
                 logger.error(f"Request error: {e} {e.response.status_code}")
-
 
     async def connect_to_server(self):
         """Connect to the server using WebSocket."""
@@ -139,7 +141,8 @@ class Client:
                 # assign nickname of user who is leaving to a variable
                 left_nick = packet.get("n")
 
-                # if that user is inside the public keys dict, delete them from it
+                # if that user is inside the public keys dict, delete them from
+                # it
                 if left_nick in self.user_public_keys:
                     del self.user_public_keys[left_nick]
 
@@ -255,7 +258,8 @@ class Client:
         encrypted_key_b64 = packet.get("k")
         iv_b64 = packet.get("iv")
         signature_b64 = packet.get("h")
-        # check to see if all parts of the message packet have been received, if not, chuck em out and log an error
+        # check to see if all parts of the message packet have been received,
+        # if not, chuck em out and log an error
         if not all(
             [
                 sender,
@@ -267,21 +271,21 @@ class Client:
         ):
             logger.error("Message packet incomplete")
         final_packet = {
-                "s": sender,
-                "encrypted_message_b64": encrypted_key_b64,
-                "encrypted_key_b64": encrypted_key_b64,
-                "iv_b64": iv_b64,
-                "signature_b64": signature_b64,
+            "s": sender,
+            "encrypted_message_b64": encrypted_key_b64,
+            "encrypted_key_b64": encrypted_key_b64,
+            "iv_b64": iv_b64,
+            "signature_b64": signature_b64,
         }
         await self.decrypt_message(final_packet)
 
     async def decrypt_message(self, message_packet):
         try:
             # Decode from base64
-            encrypted_key = base64.b64decode(encrypted_key_b64)
-            encrypted_message = base64.b64decode(encrypted_msg_b64)
-            iv = base64.b64decode(iv_b64)
-            signature = base64.b64decode(signature_b64)
+            encrypted_key = base64.b64decode(message_packet["encrypted_key_b64"])
+            encrypted_message = base64.b64decode(message_packet["encrypted_msg_b64"])
+            iv = base64.b64decode(message_packet["iv_b64"])
+            signature = base64.b64decode(message_packet["signature_b64"])
 
             # Decrypt the aes key with the private rsa key
             aes_key = self.private_key.decrypt(
@@ -300,13 +304,14 @@ class Client:
                 iv, encrypted_message, None
             )
 
-            # Create local hash of the content to compare against the hash received
+            # Create local hash of the content to compare against the hash
+            # received
             digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
             digest.update(decrypted_content_bytes)
             payload_hash = digest.finalize()
 
             # Get senders public key to use to verify the signature
-            sender_public_key = self.user_public_keys.get(sender)
+            sender_public_key = self.user_public_keys.get(message_packet["s"])
 
             if sender_public_key:
                 try:
@@ -321,22 +326,24 @@ class Client:
                     )
                 except Exception as e:
                     logger.error(
-                        f"SECURITY: Invalid signature from {sender}. Message rejected. {e}"
-                    )
-            logger.error(f"No public key for {sender}")
+                        "SECURITY: Invalid signature from {}. Message rejected. {}".format(message_packet["s"], e))
+            else:
+                logger.error("No public key for {}".format(message_packet["s"]))
 
             # decrypt the json content using utf-8 and json.load
             decrypted_json_str = decrypted_content_bytes.decode("utf-8")
             message_payload = json.loads(decrypted_json_str)
 
-            # Check for replay attacks. If the nonce has been seen before, let the user know
+            # Check for replay attacks. If the nonce has been seen before, let
+            # the user know
             replay_nonce = message_payload.get("nonce")
             if replay_nonce in self.seen_nonces:
                 logger.warning(
-                    f"SECURITY WARNING: Replay attack detected! Dropping packet {replay_nonce}"
+                    "SECURITY WARNING: Replay attack detected! Dropping packet {}".format(replay_nonce)
                 )
 
-            # If we get here, the message is unique and not been replayed, so add it to the set
+            # If we get here, the message is unique and not been replayed, so
+            # add it to the set
             self.seen_nonces.append(replay_nonce)
 
             # Send to tui
@@ -376,7 +383,8 @@ class Client:
 
         # Check for DM
         if content.startswith("@"):
-            # Will split nickname from the rest of the message so we can use that to encrypt the message with the intended recipients key.
+            # Will split nickname from the rest of the message so we can use
+            # that to encrypt the message with the intended recipients key.
             parts = content[1:].split(" ", 1)
             if len(parts) == 2:
                 # Update the recipient variable with the intended user
@@ -385,7 +393,8 @@ class Client:
                 # Add in check to make sure you cant send message to yourself
                 if recipient == self.nickname:
                     await self.event_queue.put(
-                        ("self_message_error", " You cannot send message to yourself.")
+                        ("self_message_error",
+                         " You cannot send message to yourself.")
                     )
                     logger.error(
                         "Cannot send a direct message to yourself. Please try again."
@@ -421,7 +430,8 @@ class Client:
         # Calculate how much padding is needed
         padding_needed = TARGET_PAYLOAD_SIZE - payload_length - 50
 
-        # If needed, generate random junk data to pad the packet to the target size
+        # If needed, generate random junk data to pad the packet to the target
+        # size
         if padding_needed > 0:
             junk_data = secrets.token_hex(padding_needed // 2)
             payload_dict["_pad"] = junk_data
@@ -429,7 +439,8 @@ class Client:
         # Serialize the packet dictionary to a JSON string
         payload_bytes = payload_packet.encode("utf-8")
 
-        # SHA256 hash of the base64 string, to be added to the packet for verification
+        # SHA256 hash of the base64 string, to be added to the packet for
+        # verification
         digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
         digest.update(payload_bytes)
         payload_hash = digest.finalize()
@@ -453,9 +464,11 @@ class Client:
         # Convert back to string for the packet
         b64_iv = base64.b64encode(iv_nonce).decode("utf-8").replace("\n", "")
         b64_content = (
-            base64.b64encode(encrypted_content_bytes).decode("utf-8").replace("\n", "")
+            base64.b64encode(encrypted_content_bytes).decode(
+                "utf-8").replace("\n", "")
         )
-        b64_signature = base64.b64encode(signature).decode("utf-8").replace("\n", "")
+        b64_signature = base64.b64encode(
+            signature).decode("utf-8").replace("\n", "")
 
         # Create empty targets list to populate with recipients
         targets = []
@@ -469,7 +482,8 @@ class Client:
             else:
                 # If the user was not found, let the user know
                 await self.event_queue.put(
-                    ("user_not_found_error", f"Error: User {recipient} not found.")
+                    ("user_not_found_error",
+                     f"Error: User {recipient} not found.")
                 )
                 return
 
@@ -478,7 +492,10 @@ class Client:
             await self.event_queue.put(("no_targets", "No other users connected."))
             return
 
-        # NOTE: Optimization needed. Currently, we encrypt and upload the full message body N times for N users. A better approach would be to encrypt the body once (AES), and only encrypt the AES key N times (RSA), sending a single payload to the server.
+        # NOTE: Optimization needed. Currently, we encrypt and upload the full
+        # message body N times for N users. A better approach would be to
+        # encrypt the body once (AES), and only encrypt the AES key N times
+        # (RSA), sending a single payload to the server.
 
         # For all of the nickname(s) in targets.
         # - Get their public RSA key
@@ -499,7 +516,8 @@ class Client:
                 )
 
                 # The encrypted aes key, courtesy of rsa. Wicked.
-                b64_encrypted_key = base64.b64encode(encrypted_aes_key).decode("utf-8")
+                b64_encrypted_key = base64.b64encode(
+                    encrypted_aes_key).decode("utf-8")
 
                 # Build Packet
                 message_packet = {
@@ -523,7 +541,8 @@ class Client:
 
         if recipient == "ALL":
             await self.event_queue.put(
-                ("broadcasted_to_users", f"Broadcast sent to {len(targets)} users")
+                ("broadcasted_to_users",
+                 f"Broadcast sent to {len(targets)} users")
             )
         else:
             await self.event_queue.put(("sent_to_user", f"DM sent to {recipient}"))
