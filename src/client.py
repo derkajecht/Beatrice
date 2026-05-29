@@ -70,7 +70,7 @@ class Client:
             "k": self.public_key_str,
         }
 
-    def get_public_key(self, nickname: str):
+    def get_public_key(self, nickname):
         if nickname not in self._key_cache:
             pem = self.user_public_keys[nickname]
             self._key_cache[nickname] = serialization.load_pem_public_key(pem)
