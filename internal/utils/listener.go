@@ -44,8 +44,13 @@ func HandleConnection(conn net.Conn) {
 		// Handle handshake packet
 		case "h":
 			var p models.HandshakePacket
-			json.Unmarshal(buf[:n], &p)
-			HandleHandshake(p, conn) // Call the handleHandshake function with the received handshake packet
+			if err := json.Unmarshal(buf[:n], &p); err != nil {
+				log.Println("Error unmarshalling handshake packet:", err)
+				return
+			}
+
+			// Call the handleHandshake function with the received handshake packet
+			HandleHandshake(p, conn)
 
 		// Handle message packet
 		case "m":

@@ -8,6 +8,7 @@ import (
 	"github.com/derkajecht/Beatrice/internal/models"
 )
 
+// SendError sends a success packet to the client
 func SendError(conn net.Conn, errMsg string) bool {
 	// Send an error packet to the client
 
@@ -32,4 +33,20 @@ func SendError(conn net.Conn, errMsg string) bool {
 	}
 
 	return true
+}
+
+func SendToClient(conn net.Conn, successMsg string) error {
+	successPacket := models.SuccessPacket{
+		Type:    "s",
+		Message: successMsg,
+	}
+
+	buf, marshalErr := json.Marshal(successPacket)
+	if marshalErr != nil {
+		log.Println("Error marshalling success packet:", marshalErr)
+		return marshalErr
+	}
+
+	_, writeErr := conn.Write(buf)
+	return writeErr
 }
