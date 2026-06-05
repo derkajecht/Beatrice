@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"flag"
@@ -35,17 +35,15 @@ func RunServer(host string, port string, dbName string) {
 	defer db.Close()
 }
 
-func main(host string, port string, dbName string) {
+func main() {
 
-	// Parse command line arguments
-	flag.String("host", "localhost", "Host of the server")
-	flag.String("port", "8080", "Port of the server")
-	flag.String("db", "beatrice.db", "Name of the database")
+	host := flag.String("host", "localhost", "Host of the server")
+	port := flag.String("port", "8080", "Port of the server")
+	dbName := flag.String("db", "beatrice.db", "Name of the database")
 
 	flag.Parse()
 
-	// start the server with the host, port, and database name provided
-	RunServer(host, port, dbName)
+	RunServer(*host, *port, *dbName)
 
 	// example usage:
 	// go run main.go -host localhost -port 8080 -db beatrice.db
