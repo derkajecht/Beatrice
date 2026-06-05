@@ -1,84 +1,84 @@
 package types
 
 import (
+	"encoding/json"
 	"net"
 	"sync"
 )
 
-type Envelope struct {
-	Type string `json:"t"`
+// GeneralPacket acts as the global Envelope for all network communication.
+// Read this first to determine the inner packet routing.
+type GeneralPacket struct {
+	Type    string          `json:"t"`
+	Message json.RawMessage `json:"m"`
 }
 
 type HandshakePacket struct {
-	Type     string `json:"t"`
 	Nickname string `json:"n"`
-	PubKey   string `json:"k"`
+	PubKey   string `json:"k"` // Base64 PEM Identity Key
+}
+
+type ChallengePacket struct {
+	Nickname    string `json:"n"`
+	PendingAuth string `json:"p"` // Challenge payload to be signed by client
+	PubKey      string `json:"pk"`
+	IsNew       bool   `json:"new"`
 }
 
 type MessagePacket struct {
-	Type      string `json:"t"`
 	Recipient string `json:"r"`
 	Sender    string `json:"s"`
-	IV        string `json:"iv"`
-	AESKey    []byte `json:"k"` // AES key encrypted with recipient's public key
-	Content   []byte `json:"c"` // Encrypted message blob
-	Signature string `json:"sig"`
+	IV        string `json:"iv"`  // Base64 Initialization Vector for AES-GCM/CBC
+	AESKey    string `json:"k"`   // Ephemeral AES key encrypted via Recipient's PubKey (Base64)
+	Content   string `json:"c"`   // Encrypted message payload payload (Base64)
+	Signature string `json:"sig"` // Sender's signature verifying authenticity
 }
 
 type JoinPacket struct {
-	Type     string `json:"t"`
 	Nickname string `json:"n"`
 	PubKey   string `json:"k"`
 }
 
 type DirPacket struct {
-	Type          string            `json:"t"`
-	Current_Users map[string]string `json:"cu"`
-}
-
-type ChallengePacket struct {
-	Type         string `json:"t"`
-	Nickname     string `json:"n"`
-	Pending_Auth string `json:"p"`
-	PubKey       string `json:"pk"`
-	IsNew        bool   `json:"new"`
+	CurrentUsers map[string]string `json:"cu"` // map[Nickname]PublicKey
 }
 
 type LeavePacket struct {
-	Type     string `json:"t"`
 	Nickname string `json:"n"`
 	PubKey   string `json:"k"`
 }
 
 type ErrPacket struct {
-	Type    string `json:"t"`
 	Message string `json:"m"`
 }
 
 type SuccessPacket struct {
-	Type    string            `json:"t"`
-	Message map[string]string `json:"m"`
+	Message string `json:"m"`
 }
 
-type GeneralPacket struct {
-	Type    string            `json:"t"`
-	Message map[string]string `json:"m"`
-}
+// -------------------------------------------------------------------
+// Server Memory Tracking Models
+// -------------------------------------------------------------------
 
-// Client represents a client connection
+// Client represents a fully authenticated server-side active connection tracking state
 type Client struct {
 	Conn     net.Conn
 	Nickname string
 	PubKey   string
 }
 
-// Room represents a chat room
+// Room represents a thread-safe chat room instance
 type Room struct {
-	sync.Mutex
-	Clients map[net.Conn]*Client
+	sync.RWMutex // Upgraded to RWMutex for high-performance concurrent reads
+	Clients      map[net.Conn]*Client
 }
 
-// ChatRoom is the global chat room
-var ChatRoom = &Room{
-	Clients: make(map[net.Conn]*Client),
+// NewRoom acts as a reliable constructor for room instances
+func NewRoom() *Room {
+	return &Room{
+		Clients: make(map[net.Conn]*Client),
+	}
 }
+
+// ChatRoom is the global thread-safe active memory map
+var ChatRoom = NewRoom()

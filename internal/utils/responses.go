@@ -2,7 +2,8 @@ package utils
 
 import (
 	"encoding/json"
-	"log"
+	"io"
+	"log/slog"
 	"net"
 
 	"github.com/derkajecht/Beatrice/internal/types"
@@ -13,21 +14,20 @@ import (
 func SendError(conn net.Conn, errMsg string) bool {
 	// set up error packet struct
 	errPacket := types.ErrPacket{
-		Type:    "e",
 		Message: errMsg,
 	}
 
 	// marshal error packet struct to JSON
 	buf, marshalErr := json.Marshal(errPacket)
 	if marshalErr != nil {
-		log.Println("Error marshalling error packet:", marshalErr)
+		slog.Error("Error marshalling error packet:", "err", marshalErr, "client", conn.RemoteAddr())
 		return false
 	}
 
 	// write JSON to connection
 	_, writeErr := conn.Write(buf)
 	if writeErr != nil {
-		log.Println("Error writing to connection:", writeErr)
+		slog.Error("Error writing error packet to connection:", "err", writeErr, "client", conn.RemoteAddr())
 		return false
 	}
 
@@ -36,19 +36,47 @@ func SendError(conn net.Conn, errMsg string) bool {
 
 // SendPacketToClient sends a packet or message to the client
 // and returns an error if any
-// TODO: Could make the type of outboundMessage better
-func SendPacketToClient(conn net.Conn, outboundMessage map[string]string) error {
-	clientToReceive := types.GeneralPacket{
-		Type:    "g",
-		Message: outboundMessage,
-	}
+func SendPacketToClient(conn net.Conn, packetType string, innerPacket any) error {
 
-	buf, marshalErr := json.Marshal(clientToReceive)
+	// marshal inner packet to JSON
+	innerBytes, marshalErr := json.Marshal(innerPacket)
 	if marshalErr != nil {
-		log.Println("Error marshalling success packet:", marshalErr)
+		slog.Error("err_marshalling_inner_packet", "err", marshalErr, "client", conn.RemoteAddr())
 		return marshalErr
 	}
 
-	_, writeErr := conn.Write(buf)
-	return writeErr
+	// create envelope struct and wrap inner packet in it
+	envelope := types.GeneralPacket{
+		Type:    packetType,
+		Message: innerBytes,
+	}
+
+	// marshal envelope struct to JSON
+	finalPayload, marshalErr := json.Marshal(envelope)
+	if marshalErr != nil {
+		slog.Error("err_marshalling_envelope", "err", marshalErr, "client", conn.RemoteAddr())
+		return marshalErr
+	}
+
+	// write the envelope to the connection
+	n, writeErr := conn.Write(finalPayload)
+	if writeErr != nil {
+		slog.Error("err_writing_packet", "err", writeErr, "client", conn.RemoteAddr())
+		return writeErr
+	}
+
+	// check if the entire packet was written
+	// if not, return an error
+	if n < len(finalPayload) {
+		slog.Error("err_writing_packet", "err", writeErr, "client", conn.RemoteAddr())
+		return io.ErrShortWrite
+	}
+
+	return nil
+}
+
+// DisconnectAndQuit closes the connection and quits the application
+func DisconnectAndQuit(conn net.Conn) {
+	SendError(conn, "err_connection_closed")
+	conn.Close()
 }

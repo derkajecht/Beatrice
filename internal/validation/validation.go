@@ -1,6 +1,6 @@
 // Package utils contains utility functions for the project such as validation, listener,
 // responses and router
-package utils
+package validation
 
 import (
 	"database/sql"

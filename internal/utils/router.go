@@ -2,13 +2,14 @@ package utils
 
 import (
 	"log"
+	"log/slog"
 	"net"
 
 	"github.com/derkajecht/Beatrice/internal/models"
 	"github.com/derkajecht/Beatrice/internal/types"
 )
 
-func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, map[string]string, error) {
+func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	// TODO: Implement handshake logic
 	// client should send a message packet with the following data:
 	// {"t":"h", "n": nickname,	"k": pubkey}
@@ -21,35 +22,32 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, map[string]s
 
 	// check if user already connected
 	if types.ChatRoom.Clients[conn] != nil {
-		err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "User already connected")
-		if err != nil {
-			log.Println("Error creating error packet:", err)
-			return false, err_packet, nil
-		}
-		return false, err_packet, err
+		// build error packet
+		err_packet := models.NewErrPacket("err_user_already_connected")
+		// send error packet to client
+		err := SendPacketToClient(conn, "e", err_packet)
+		return false, err
 	}
 
 	// check if nickname and public key are not empty
 	if p.Nickname == "" || p.PubKey == "" {
-		err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "Nickname and/or public key are empty")
-		if err != nil {
-			log.Println("Error creating error packet:", err)
-			return false, err_packet, nil
-		}
-		return false, err_packet, nil
+		// build error packet
+		err_packet := models.NewErrPacket("err_nickname_or_pubkey_empty")
+		// send error packet to client
+		err := SendPacketToClient(conn, "e", err_packet)
+		return false, err
 	}
 
 	// check if nickname is already in use
 	for _, client := range types.ChatRoom.Clients {
 		if client.Nickname == p.Nickname {
-			err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "Nickname already in use")
-			if err != nil {
-				log.Println("Error creating error packet:", err)
-				return false, err_packet, nil
-			}
-			return false, err_packet, nil
+			// build error packet
+			err_packet := models.NewErrPacket("err_nickname_taken")
+			// send error packet to client
+			err := SendPacketToClient(conn, "e", err_packet)
+			return false, err
 		}
-		return false, nil, nil
+		return false, nil
 	}
 
 	// add user to the chat room
@@ -63,22 +61,17 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, map[string]s
 	list := models.GetUserList(types.ChatRoom, p.Nickname)
 
 	// create dir packet
-	userDirPacket, err := models.NewDirPacket(&types.DirPacket{}, list)
-	if err != nil {
-		log.Println("Error creating dir packet:", err)
-		delete(types.ChatRoom.Clients, conn)
-		return false, nil, nil
-	}
+	currentUsers := models.NewDirPacket(list)
 
 	// send dir packet to client
-	err = SendPacketToClient(conn, userDirPacket)
+	err := SendPacketToClient(conn, "d", currentUsers)
 	if err != nil {
 		log.Println("Error sending dir packet:", err)
 		delete(types.ChatRoom.Clients, conn)
-		return false, nil, nil
+		return false, nil
 	}
 
-	return true, nil, nil
+	return true, nil
 }
 
 func HandleMessage(p types.MessagePacket, conn net.Conn) {
@@ -95,6 +88,44 @@ func HandleLeave(p types.LeavePacket, conn net.Conn) {
 
 func HandleError(p types.ErrPacket, conn net.Conn) {
 	// TODO: Implement error logic
+	// the client should receive a message packet with the following data:
+	// {"t":"e", "m": message}
+
+	switch p.Message {
+	case "invalid_protocol_format":
+		// TODO: Implement invalid protocol format logic
+		slog.Error("Critical client/server mismatch. Disconnecting")
+		// call Disconnect/Quit function with the client
+		DisconnectAndQuit(conn)
+
+	case "err_nickname_taken":
+		// TODO: Implement nickname taken logic
+		// trigger UI to display error message "That nickname is already taken. Please choose another one."
+		// trigger func to allow the user to choose another nickname
+		// EnableNicknameChoice(conn)
+
+	case "err_user_already_connected":
+		// TODO: Implement user already connected logic
+		// trigger UI to display error message "That nickname is already taken. Please choose another one."
+		// trigger func to allow the user to choose another nickname
+		// EnableNicknameChoice(conn)
+
+	case "err_room_full":
+		// TODO: Implement room full logic
+		// trigger UI to display error message "The room is full. Please try again later."
+		// ReturnToLobby(conn)
+
+	case "err_connection_closed":
+		// TODO: Implement connection closed logic
+		// trigger UI to display error message "Connection closed. Please try again later."
+		// ReturnToLobby(conn)
+
+	case "err_invalid_pubkey":
+		// TODO: Implement invalid pubkey logic
+		// trigger UI to display error message "Invalid public key. Please try again later."
+		// ReturnToLobby(conn)
+	}
+
 }
 
 func HandleDir(p types.DirPacket, conn net.Conn) {

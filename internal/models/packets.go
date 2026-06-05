@@ -5,39 +5,17 @@ import (
 )
 
 // NewErrPacket creates a new error packet struct with the given error message
-func NewErrPacket(p *types.ErrPacket, errMsg string) (map[string]string, error) {
-	// set values for error packet struct
-	p = &types.ErrPacket{
-		Type:    "e",
+func NewErrPacket(errMsg string) *types.ErrPacket {
+	return &types.ErrPacket{
 		Message: errMsg,
 	}
-
-	// convert error packet struct to map[string]string
-	// and return the map and an error if any
-	errPacketMap, err := types.ConvertPacketToMap(p)
-	if err != nil {
-		return nil, err
-	}
-
-	return errPacketMap, err
 }
 
 // NewDirPacket creates a new dir packet struct with the given user list
-func NewDirPacket(p *types.DirPacket, GetUserList map[string]string) (map[string]string, error) {
-	// set values for dir packet struct
-	p = &types.DirPacket{
-		Type:          "d",
-		Current_Users: GetUserList,
+func NewDirPacket(GetUserList map[string]string) *types.DirPacket {
+	return &types.DirPacket{
+		CurrentUsers: GetUserList,
 	}
-
-	// convert dir packet struct to map[string]string
-	// and return the map and an error if any
-	dirPacketMap, err := types.ConvertPacketToMap(p)
-	if err != nil {
-		return nil, err
-	}
-
-	return dirPacketMap, err
 }
 
 // GetUserList returns a list of nicknames and their public keys for all connected users

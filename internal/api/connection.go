@@ -5,7 +5,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/utils"
+	listenerpkg "github.com/derkajecht/Beatrice/internal/listener"
+	"github.com/derkajecht/Beatrice/internal/validation"
 )
 
 // NewServer initializes a new server instance
@@ -19,7 +20,7 @@ func NewServer(port string, host string) error {
 		"host": host,
 	}
 	for fieldName, addr := range inputs {
-		if utils.IsEmpty(addr) {
+		if validation.IsEmpty(addr) {
 			return fmt.Errorf("Cannot start server: %s cannot be empty", fieldName)
 		}
 	}
@@ -47,7 +48,7 @@ func NewServer(port string, host string) error {
 		}
 
 		// handle the connection in a new goroutine
-		go utils.HandleConnection(conn)
+		go listenerpkg.HandleConnection(conn)
 	}
 }
 
@@ -59,7 +60,7 @@ func NewClient(port string, host string) error {
 		"host": host,
 	}
 	for fieldName, addr := range inputs {
-		if !utils.IsEmpty(addr) {
+		if !validation.IsEmpty(addr) {
 			return fmt.Errorf("Cannot connect to server: %s cannot be empty", fieldName)
 		}
 	}
@@ -87,6 +88,6 @@ func NewClient(port string, host string) error {
 		}
 
 		// handle the connection in a new goroutine
-		go utils.HandleConnection(conn)
+		go listenerpkg.HandleConnection(conn)
 	}
 }
