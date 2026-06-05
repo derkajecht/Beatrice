@@ -5,15 +5,14 @@ import (
 	"log"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/models"
+	"github.com/derkajecht/Beatrice/internal/types"
 )
 
-// SendError sends a success packet to the client
+// TODO: Could rename SendStatus to capture both success and error packets
+// SendError sends a error packet to the client
 func SendError(conn net.Conn, errMsg string) bool {
-	// Send an error packet to the client
-
 	// set up error packet struct
-	errPacket := models.ErrPacket{
+	errPacket := types.ErrPacket{
 		Type:    "e",
 		Message: errMsg,
 	}
@@ -35,13 +34,16 @@ func SendError(conn net.Conn, errMsg string) bool {
 	return true
 }
 
-func SendToClient(conn net.Conn, successMsg string) error {
-	successPacket := models.SuccessPacket{
-		Type:    "s",
-		Message: successMsg,
+// SendPacketToClient sends a packet or message to the client
+// and returns an error if any
+// TODO: Could make the type of outboundMessage better
+func SendPacketToClient(conn net.Conn, outboundMessage map[string]string) error {
+	clientToReceive := types.GeneralPacket{
+		Type:    "g",
+		Message: outboundMessage,
 	}
 
-	buf, marshalErr := json.Marshal(successPacket)
+	buf, marshalErr := json.Marshal(clientToReceive)
 	if marshalErr != nil {
 		log.Println("Error marshalling success packet:", marshalErr)
 		return marshalErr

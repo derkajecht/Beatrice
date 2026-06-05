@@ -5,75 +5,102 @@ import (
 	"net"
 
 	"github.com/derkajecht/Beatrice/internal/models"
+	"github.com/derkajecht/Beatrice/internal/types"
 )
 
-func HandleHandshake(p models.HandshakePacket, conn net.Conn) (bool, *models.ErrPacket, *models.SuccessPacket) {
+func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, map[string]string, error) {
 	// TODO: Implement handshake logic
 	// client should send a message packet with the following data:
 	// {"t":"h", "n": nickname,	"k": pubkey}
 	// server should send a handshake packet to the client containing a success message
 	// and all connected users
 
+	// safely read and write to the ChatRoom map
+	types.ChatRoom.Lock()
+	defer types.ChatRoom.Unlock()
+
 	// check if user already connected
-	if models.ChatRoom.Clients[conn] != nil {
-		err_packet := models.NewErrPacket("User already connected")
-		return false, err_packet, nil
+	if types.ChatRoom.Clients[conn] != nil {
+		err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "User already connected")
+		if err != nil {
+			log.Println("Error creating error packet:", err)
+			return false, err_packet, nil
+		}
+		return false, err_packet, err
 	}
 
 	// check if nickname and public key are not empty
 	if p.Nickname == "" || p.PubKey == "" {
-		err_packet := models.NewErrPacket("Nickname and/or public key are empty")
+		err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "Nickname and/or public key are empty")
+		if err != nil {
+			log.Println("Error creating error packet:", err)
+			return false, err_packet, nil
+		}
 		return false, err_packet, nil
 	}
 
-	// check if user is trying to connect with their own nickname
-	if p.Nickname == models.ChatRoom.Clients[conn].Nickname {
-		err_packet := models.NewErrPacket("Nickname cannot be the same as your own")
-		return false, err_packet, nil
+	// check if nickname is already in use
+	for _, client := range types.ChatRoom.Clients {
+		if client.Nickname == p.Nickname {
+			err_packet, err := models.NewErrPacket(&types.ErrPacket{}, "Nickname already in use")
+			if err != nil {
+				log.Println("Error creating error packet:", err)
+				return false, err_packet, nil
+			}
+			return false, err_packet, nil
+		}
+		return false, nil, nil
 	}
 
 	// add user to the chat room
-	models.ChatRoom.Lock()
-	models.ChatRoom.Clients[conn] = &models.Client{
+	types.ChatRoom.Clients[conn] = &types.Client{
 		Conn:     conn,
 		Nickname: p.Nickname,
 		PubKey:   p.PubKey,
 	}
-	models.ChatRoom.Unlock()
 
-	// send dir packet to client (nickname, public key)
-	list := models.ChatRoom.GetUserList(p.Nickname)
-	dir_packet := models.NewDirPacket(list)
+	// get user list of all connected users except the new user
+	list := models.GetUserList(types.ChatRoom, p.Nickname)
 
-	err := SendToClient(conn, dir_packet.Message)
+	// create dir packet
+	userDirPacket, err := models.NewDirPacket(&types.DirPacket{}, list)
+	if err != nil {
+		log.Println("Error creating dir packet:", err)
+		delete(types.ChatRoom.Clients, conn)
+		return false, nil, nil
+	}
+
+	// send dir packet to client
+	err = SendPacketToClient(conn, userDirPacket)
 	if err != nil {
 		log.Println("Error sending dir packet:", err)
+		delete(types.ChatRoom.Clients, conn)
 		return false, nil, nil
 	}
 
 	return true, nil, nil
 }
 
-func HandleMessage(p models.MessagePacket, conn net.Conn) {
+func HandleMessage(p types.MessagePacket, conn net.Conn) {
 	// TODO: Implement message logic
 }
 
-func HandleJoin(p models.JoinPacket, conn net.Conn) {
+func HandleJoin(p types.JoinPacket, conn net.Conn) {
 	// TODO: Implement join logic
 }
 
-func HandleLeave(p models.LeavePacket, conn net.Conn) {
+func HandleLeave(p types.LeavePacket, conn net.Conn) {
 	// TODO: Implement leave logic
 }
 
-func HandleError(p models.ErrPacket, conn net.Conn) {
+func HandleError(p types.ErrPacket, conn net.Conn) {
 	// TODO: Implement error logic
 }
 
-func HandleDir(p models.DirPacket, conn net.Conn) {
+func HandleDir(p types.DirPacket, conn net.Conn) {
 	// TODO: Implement dir logic
 }
 
-func HandleChallenge(p models.ChallengePacket, conn net.Conn) {
+func HandleChallenge(p types.ChallengePacket, conn net.Conn) {
 	// TODO: Implement challenge logic
 }

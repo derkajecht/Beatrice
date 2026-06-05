@@ -34,3 +34,7 @@ Frameworks to use in place of the current Python implementation;
 │ DB Driver  │ aiosqlite         │ modernc.org/sqlite      │
 │ CLI Flags  │ argparse          │ cobra                   │
 └────────────┴───────────────────┴─────────────────────────┘
+
+## In-Progress/TODO
+- Start writing the logic to handle the type of packets received
+- Started writing some tests for funcs, mostly just to understand how that would work in go.

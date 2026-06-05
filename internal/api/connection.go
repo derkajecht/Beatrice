@@ -19,7 +19,7 @@ func NewServer(port string, host string) error {
 		"host": host,
 	}
 	for fieldName, addr := range inputs {
-		if !utils.IsEmpty(addr) {
+		if utils.IsEmpty(addr) {
 			return fmt.Errorf("Cannot start server: %s cannot be empty", fieldName)
 		}
 	}
@@ -42,7 +42,7 @@ func NewServer(port string, host string) error {
 		// accept incoming connections
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Println("Error accepting connection:", err)
+			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 

@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/models"
+	"github.com/derkajecht/Beatrice/internal/types"
 )
 
 func HandleConnection(conn net.Conn) {
@@ -28,7 +28,7 @@ func HandleConnection(conn net.Conn) {
 		}
 
 		// get envelope struct from buffer to unmarshal and check for packet type
-		var env models.Envelope
+		var env types.Envelope
 
 		if err := json.Unmarshal(buf[:n], &env); err != nil {
 			log.Println("Error unmarshalling envelope:", err)
@@ -43,7 +43,7 @@ func HandleConnection(conn net.Conn) {
 		switch env.Type {
 		// Handle handshake packet
 		case "h":
-			var p models.HandshakePacket
+			var p types.HandshakePacket
 			if err := json.Unmarshal(buf[:n], &p); err != nil {
 				log.Println("Error unmarshalling handshake packet:", err)
 				return
@@ -54,37 +54,37 @@ func HandleConnection(conn net.Conn) {
 
 		// Handle message packet
 		case "m":
-			var p models.MessagePacket
+			var p types.MessagePacket
 			json.Unmarshal(buf[:n], &p)
 			HandleMessage(p, conn) // Call the handleMessage function with the received message packet
 
 		// Handle join packet
 		case "j":
-			var p models.JoinPacket
+			var p types.JoinPacket
 			json.Unmarshal(buf[:n], &p)
 			HandleJoin(p, conn) // Call the handleJoin function with the received join packet
 
 		// Handle leave packet
 		case "l":
-			var p models.LeavePacket
+			var p types.LeavePacket
 			json.Unmarshal(buf[:n], &p)
 			HandleLeave(p, conn) // Call the handleLeave function with the received leave packet
 
 		// Handle error packet
 		case "e":
-			var p models.ErrPacket
+			var p types.ErrPacket
 			json.Unmarshal(buf[:n], &p)
 			HandleError(p, conn) // Call the handleError function with the received error packet
 
 		// Handle dir packet
 		case "d":
-			var p models.DirPacket
+			var p types.DirPacket
 			json.Unmarshal(buf[:n], &p)
 			HandleDir(p, conn) // Call the handleDir function with the received dir packet
 
 		// Handle challenge packet
 		case "c":
-			var p models.ChallengePacket
+			var p types.ChallengePacket
 			json.Unmarshal(buf[:n], &p)
 			HandleChallenge(p, conn) // Call the handleChallenge function with the received challenge packet
 		}

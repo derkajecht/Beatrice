@@ -20,7 +20,7 @@ func IsValidUsername(db *sql.DB, username string) bool {
 	var exists int
 
 	// check if the username exists in the database
-	err := db.QueryRow("SELECT id FROM users WHERE username = ?)", username).Scan(&exists)
+	err := db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&exists)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // username is available
