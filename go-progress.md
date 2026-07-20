@@ -21,11 +21,15 @@
 
 ## Phase 0: Fix Critical Bugs First
 
-- [ ] **Client uses `net.Listen` instead of `net.Dial`** (`internal/api/connection.go:55`) — `NewClient` is a copy of `NewServer`. Replace with `net.Dial("tcp", address)`.
-- [ ] **`NewClient` validation logic inverted** (`internal/api/connection.go:63`) — `if !validation.IsEmpty(addr)` rejects non-empty values. Should be `if validation.IsEmpty(addr)`.
-- [ ] **`NewServer` argument order swapped** — signature is `(port, host)` but callers pass `(host, port)`. Fix either the signature or the call sites.
-- [ ] **Server blocks forever before DB init** (`cmd/server/main.go:17`) — `api.NewServer` runs an infinite accept loop. `storage.NewDatabase` on the next line never executes. Need goroutine or restructure.
-- [ ] **Handshake loop exits after first client** (`internal/utils/router.go:50`) — `return false, nil` is inside the `for` loop over `ChatRoom.Clients`, so only the first client is ever examined. Move it outside the loop.
+- [x] **Client uses `net.Listen` instead of `net.Dial`** (`internal/api/connection.go:55`) — `NewClient` is a copy of `NewServer`. Replace with `net.Dial("tcp", address)`.
+
+- [x] **`NewClient` validation logic inverted** (`internal/api/connection.go:63`) — `if !validation.IsEmpty(addr)` rejects non-empty values. Should be `if validation.IsEmpty(addr)`.
+
+- [x] **`NewServer` argument order swapped** — signature is `(port, host)` but callers pass `(host, port)`. Fix either the signature or the call sites.
+
+- [x] **Server blocks forever before DB init** (`cmd/server/main.go:17`) — `api.NewServer` runs an infinite accept loop. `storage.NewDatabase` on the next line never executes. Need goroutine or restructure.
+
+- [x] **Handshake loop exits after first client** (`internal/utils/router.go:50`) — `return false, nil` is inside the `for` loop over `ChatRoom.Clients`, so only the first client is ever examined. Move it outside the loop.
 
 ---
 

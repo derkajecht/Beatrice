@@ -10,6 +10,7 @@ import (
 )
 
 // TODO: Could rename SendStatus to capture both success and error packets
+
 // SendError sends a error packet to the client
 func SendError(conn net.Conn, errMsg string) bool {
 	// set up error packet struct

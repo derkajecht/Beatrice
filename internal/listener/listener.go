@@ -1,7 +1,9 @@
+// Package listener handles incoming connections and packets and calls the appropriate
+// function based on the packet type.
 package listener
 
 import (
-	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -10,12 +12,15 @@ import (
 	"github.com/derkajecht/Beatrice/internal/utils"
 )
 
+// bufferPool is a sync.Pool that creates buffers of size 4096
 var bufferPool = sync.Pool{
 	New: func() any {
 		return make([]byte, 4096)
 	},
 }
 
+// HandleConnection handles incoming connections and packets. It reads data from the connection,
+// unmarshals it, and calls the appropriate function based on the packet type.
 func HandleConnection(conn net.Conn) {
 	// close the connection once the function is done (ie. when the app is closed)
 	defer conn.Close()
@@ -31,20 +36,20 @@ func HandleConnection(conn net.Conn) {
 		// if an error occurs, log it and return
 		n, err := conn.Read(buf)
 		if err != nil {
+			if err == io.EOF {
+				slog.Info("Connection closed by client", "client", conn.RemoteAddr())
+				return
+			}
 			slog.Error("Error reading from connection:", "err", err, "client", conn.RemoteAddr())
+			conn.Close()
 			return
 		}
 
 		// get envelope struct from buffer to unmarshal and check for packet type
-		var env types.GeneralPacket
-		if err := json.Unmarshal(buf[:n], &env); err != nil {
-			// log error
-			slog.Error("Error unmarshalling envelope:", "err", err, "client", conn.RemoteAddr())
-
-			// Send error packet to client
-			utils.SendError(conn, "invalid_protocol_format")
-
-			continue
+		var genPacket types.GeneralPacket
+		err = utils.UnmarshalPacket(conn, buf, n, &genPacket)
+		if err != nil {
+			return
 		}
 
 		// packet types used in the chat;
@@ -52,19 +57,14 @@ func HandleConnection(conn net.Conn) {
 
 		// check packets based on type and Handle them accordingly
 		// Handle... functions are defined in router.go
-		switch env.Type {
+		switch genPacket.Type {
 
 		// --- Handle handshake packet ---
 		case "h":
 			var p types.HandshakePacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling handshake packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
 
 			// Call the handleHandshake function with the received handshake packet
@@ -73,29 +73,20 @@ func HandleConnection(conn net.Conn) {
 		// --- Handle message packet ---
 		case "m":
 			var p types.MessagePacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling message packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
+
 			// Call the handleMessage function with the received message packet
 			utils.HandleMessage(p, conn)
 
 		// --- Handle join packet ---
 		case "j":
 			var p types.JoinPacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling join packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
 
 			// Call the handleJoin function with the received join packet
@@ -104,67 +95,51 @@ func HandleConnection(conn net.Conn) {
 		// --- Handle leave packet ---
 		case "l":
 			var p types.LeavePacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling leave packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
+
 			// Call the handleLeave function with the received leave packet
 			utils.HandleLeave(p, conn)
 
 		// --- Handle error packet ---
 		case "e":
 			var p types.ErrPacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling error packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
+
 			// Call the handleError function with the received error packet
 			utils.HandleError(p, conn)
 
 		// --- Handle dir packet ---
 		case "d":
 			var p types.DirPacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling dir packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
+
 			// Call the handleDir function with the received dir packet
 			utils.HandleDir(p, conn)
 
 		// --- Handle challenge packet ---
 		case "c":
 			var p types.ChallengePacket
-			if err := json.Unmarshal(buf[:n], &p); err != nil {
-				// log error
-				slog.Error("Error unmarshalling challenge packet:", "err", err, "client", conn.RemoteAddr())
-
-				// Send error packet to client
-				utils.SendError(conn, "invalid_protocol_format")
-
-				break
+			err = utils.UnmarshalPacket(conn, buf, n, &p)
+			if err != nil {
+				return
 			}
+
 			// Call the handleChallenge function with the received challenge packet
 			utils.HandleChallenge(p, conn)
 		}
 
 		// clear the buffer after use and put it back into the pool
-		utils.ClearBuffer(buf)
-		bufferPool.Put(buf)
+		clear(buf)
+		bufferPool.Put(&buf)
 
 	}
 }

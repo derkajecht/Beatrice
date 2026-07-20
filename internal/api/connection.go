@@ -1,10 +1,13 @@
+// Package api provides the main calls for starting and connecting to the server and client.
 package api
 
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 
+	"github.com/derkajecht/Beatrice/internal/config"
 	listenerpkg "github.com/derkajecht/Beatrice/internal/listener"
 	"github.com/derkajecht/Beatrice/internal/validation"
 )
@@ -12,26 +15,30 @@ import (
 // NewServer initializes a new server instance
 // and listens for incoming connections on the specified port.
 // It uses a goroutine to handle each incoming packet.
-func NewServer(port string, host string) error {
+func NewServer(host, port, conType string) error {
 
 	// Check if the port and host are empty
-	inputs := map[string]string{
-		"port": port,
-		"host": host,
+	// if yes, default values are set automatically
+	if validation.IsArgsEmpty(host, port, conType) {
+		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
-	for fieldName, addr := range inputs {
-		if validation.IsEmpty(addr) {
-			return fmt.Errorf("Cannot start server: %s cannot be empty", fieldName)
-		}
-	}
+
+	// create a new connection info struct
+	cfg := config.NewConnectionInfo()
+
+	// assign the port, host & connection type to the server struct so it can be used later and in
+	// different functions
+	cfg.Host = host
+	cfg.Port = port
+	cfg.ConType = conType
 
 	// Join the host and port strings to create the address
-	address := net.JoinHostPort(host, port)
+	address := net.JoinHostPort(cfg.Host, cfg.Port)
 
 	// Listen for incoming connections on the specified port
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen(cfg.ConType, address)
 	if err != nil {
-		return fmt.Errorf("Failed to listen on port %s: %w", port, err)
+		return fmt.Errorf("failed to listen on %s:%s, %s: %w", cfg.Host, cfg.Port, cfg.ConType, err)
 	}
 
 	log.Printf("Listening on %s\n", address)
@@ -52,42 +59,33 @@ func NewServer(port string, host string) error {
 	}
 }
 
-func NewClient(port string, host string) error {
+// NewClient establishes a connection to the server using the host, port and connection type provided.
+func NewClient(host, port, conType string) error {
 
 	// Check if the port and host are empty
-	inputs := map[string]string{
-		"port": port,
-		"host": host,
+	// if yes, default values are set automatically
+	if validation.IsArgsEmpty(host, port, conType) {
+		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
-	for fieldName, addr := range inputs {
-		if !validation.IsEmpty(addr) {
-			return fmt.Errorf("Cannot connect to server: %s cannot be empty", fieldName)
-		}
-	}
+
+	// create a new connection info struct
+	cfg := config.NewConnectionInfo()
+	cfg.Host = host
+	cfg.Port = port
+	cfg.ConType = conType
 
 	// Join the host and port strings to create the address
-	address := net.JoinHostPort(host, port)
+	address := net.JoinHostPort(cfg.Host, cfg.Port)
 
-	// Listen for incoming connections on the specified port
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("Failed to listen on port %s: %w", port, err)
-	}
-
-	log.Printf("Listening on %s\n", address)
-
-	// clean up on func exit
-	defer listener.Close()
-
+	// conn.Close() called inside listenerpkg.HandleConnection. No need to close here.
 	for {
-		// accept incoming connections
-		conn, err := listener.Accept()
+		// Call net.Dial to connect to the server
+		conn, err := net.Dial(cfg.ConType, address)
 		if err != nil {
-			log.Println("Error accepting connection:", err)
-			continue
+			return fmt.Errorf("failed to connect to server %s:%s, %s: %w", cfg.Host, cfg.Port, cfg.ConType, err)
 		}
 
-		// handle the connection in a new goroutine
+		// handle the connection in a new goroutine (see listenerpkg.HandleConnection)
 		go listenerpkg.HandleConnection(conn)
 	}
 }

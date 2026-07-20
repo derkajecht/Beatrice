@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewServer_EmptyPort(t *testing.T) {
-	err := api.NewServer("", "localhost")
+	err := api.NewServer("", "localhost", "tcp")
 	expected := "Cannot start server: port cannot be empty"
 
 	if err == nil {

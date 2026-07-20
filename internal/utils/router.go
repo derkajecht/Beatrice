@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"log"
 	"log/slog"
 	"net"
 
@@ -23,31 +22,36 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	// check if user already connected
 	if types.ChatRoom.Clients[conn] != nil {
 		// build error packet
-		err_packet := models.NewErrPacket("err_user_already_connected")
+		errPacket := models.NewErrPacket("err_user_already_connected")
 		// send error packet to client
-		err := SendPacketToClient(conn, "e", err_packet)
-		return false, err
+		// this should trigger the UI to display an error message and return the user to the lobby
+		err := SendPacketToClient(conn, "e", errPacket)
+		slog.Error("user already connected", "err", err, "client", conn.RemoteAddr())
+		return false, nil
 	}
 
 	// check if nickname and public key are not empty
 	if p.Nickname == "" || p.PubKey == "" {
 		// build error packet
-		err_packet := models.NewErrPacket("err_nickname_or_pubkey_empty")
+		errPacket := models.NewErrPacket("err_nickname_or_pubkey_empty")
 		// send error packet to client
-		err := SendPacketToClient(conn, "e", err_packet)
-		return false, err
+		// this should trigger the UI to display an error message and return the user to the lobby
+		err := SendPacketToClient(conn, "e", errPacket)
+		slog.Error("nickname or public key empty", "err", err, "client", conn.RemoteAddr())
+		return false, nil
 	}
 
 	// check if nickname is already in use
 	for _, client := range types.ChatRoom.Clients {
 		if client.Nickname == p.Nickname {
 			// build error packet
-			err_packet := models.NewErrPacket("err_nickname_taken")
+			errPacket := models.NewErrPacket("err_nickname_taken")
 			// send error packet to client
-			err := SendPacketToClient(conn, "e", err_packet)
-			return false, err
+			// this should trigger the UI to display an error message and return the user to the lobby
+			err := SendPacketToClient(conn, "e", errPacket)
+			slog.Error("nickname already taken", "err", err, "client", conn.RemoteAddr())
+			return false, nil
 		}
-		return false, nil
 	}
 
 	// add user to the chat room
@@ -66,11 +70,10 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	// send dir packet to client
 	err := SendPacketToClient(conn, "d", currentUsers)
 	if err != nil {
-		log.Println("Error sending dir packet:", err)
+		slog.Error("error sending dir packet", "err", err, "client", conn.RemoteAddr())
 		delete(types.ChatRoom.Clients, conn)
 		return false, nil
 	}
-
 	return true, nil
 }
 

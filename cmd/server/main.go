@@ -8,23 +8,21 @@ import (
 	"github.com/derkajecht/Beatrice/internal/storage"
 )
 
-// main function to start the server.
-// It takes in the host and port as arguments and creates a new server instance.
-// It also takes in the database name as an argument and creates a new database instance.
-func RunServer(host string, port string, dbName string) {
+// RunServer starts a new server instance and a new database connection
+// It takes the host, port, and database name as arguments
+// It returns an error if the host, port, or database name is empty
+func RunServer(host, port, conType, dbName, dbLocation string) {
 
 	// create a new server instance and pass the database connection
-	err := api.NewServer(host, port)
-	if err != nil {
-		log.Fatalf("Could not set up server: %v\n", err)
-	}
+	go api.NewServer(host, port, conType)
+
 	// log that the server was started
 	log.Println("Server started")
 
 	// create a new database instance and pass the database connection
 	// NewDatabase checks if the database is accessible and returns an error if not
 	// if the database is accessible, it returns a pointer to the database connection
-	db, err, _ := storage.NewDatabase(dbName)
+	db, dbLocation, err := storage.NewDatabase(dbName, dbLocation)
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
@@ -37,14 +35,19 @@ func RunServer(host string, port string, dbName string) {
 
 func main() {
 
+	// set flags for the cli args
 	host := flag.String("host", "localhost", "Host of the server")
 	port := flag.String("port", "8080", "Port of the server")
+	conType := flag.String("conType", "tcp", "Connection type (tcp, udp, etc.)")
 	dbName := flag.String("db", "beatrice.db", "Name of the database")
+	dbLocation := flag.String("dbLocation", "./beatrice", "Location of the database")
+	// dont need to define help flag because it is already defined in the flag package
+	// based on the decsriptions of the flags defined above
 
 	flag.Parse()
 
-	RunServer(*host, *port, *dbName)
+	RunServer(*host, *port, *conType, *dbName, *dbLocation)
 
 	// example usage:
-	// go run main.go -host localhost -port 8080 -db beatrice.db
+	// go run main.go -host localhost -port 8080 -contype tcp -db beatrice.db
 }
