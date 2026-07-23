@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/derkajecht/Beatrice/internal/crypto"
 	"github.com/gammazero/deque"
 )
 
@@ -17,13 +18,13 @@ type GeneralPacket struct {
 
 type HandshakePacket struct {
 	Nickname string `json:"n"`
-	PubKey   []byte `json:"k"` // Base64 PEM Identity Key
+	PubKey   PubKey `json:"k"` // Base64 PEM Identity Key
 }
 
 type ChallengePacket struct {
 	Nickname    string `json:"n"`
 	PendingAuth string `json:"p"` // Challenge payload to be signed by client
-	PubKey      []byte `json:"pk"`
+	PubKey      PubKey `json:"pk"`
 	IsNew       bool   `json:"new"`
 }
 
@@ -38,7 +39,7 @@ type MessagePacket struct {
 
 type JoinPacket struct {
 	Nickname string `json:"n"`
-	PubKey   []byte `json:"k"`
+	PubKey   PubKey `json:"k"`
 }
 
 type DirPacket struct {
@@ -47,7 +48,7 @@ type DirPacket struct {
 
 type LeavePacket struct {
 	Nickname string `json:"n"`
-	PubKey   []byte `json:"k"`
+	PubKey   PubKey `json:"k"`
 }
 
 type ErrPacket struct {
@@ -66,10 +67,19 @@ type ConnectedUsers struct {
 	Users map[string]string `json:"cu"` // map[Nickname]PublicKey
 }
 
+// Created these to stop repeating myself. Also allows for setting one struct instead of 5000
+type PubKey struct {
+	PubKey []byte `json:"k"`
+}
+type PrivKey struct {
+	PrivKey []byte `json:"k"`
+}
+
 // Stores the pubkey, privkey, nonces seen, and key cache
 type CryptoPacket struct {
-	PubKey     []byte               `json:"pub"`
-	PrivKey    string               `json:"priv"`
+	Suite      crypto.SuiteConfig   `json:"s"`
+	PrivKey    PrivKey              `json:"priv"`
+	PubKey     PubKey               `json:"pub"`
 	SeenNonces *deque.Deque[string] `json:"sn"`
 	KeyCache   map[string]string    `json:"kc"`
 }
@@ -89,7 +99,7 @@ type User struct {
 type Client struct {
 	Conn     net.Conn
 	Nickname string
-	PubKey   []byte
+	PubKey   PubKey
 }
 
 // Room represents a thread-safe chat room instance
@@ -106,7 +116,7 @@ func NewRoom() *Room {
 }
 
 // AddClient adds a new client to the room
-func (r *Room) AddClient(conn net.Conn, nickname string, pubKey []byte) *Client {
+func (r *Room) AddClient(conn net.Conn, nickname string, pubKey PubKey) *Client {
 	client := &Client{
 		Conn:     conn,
 		Nickname: nickname,

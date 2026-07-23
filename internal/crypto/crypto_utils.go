@@ -2,42 +2,42 @@ package crypto
 
 import (
 	"crypto/hpke"
-	"crypto/rand"
+
+	"github.com/derkajecht/Beatrice/internal/types"
 )
 
-func DeriveKEM() ([]byte, error) {
-	// init MLKEM76825519 suite
-	kem := hpke.MLKEM768X25519()
-
-	// Generate a random 32 byte key
-	ikm := make([]byte, 32)
-	_, err := rand.Read(ikm)
-	if err != nil {
-		return nil, err
-	}
-
-	// Derive the private key deterministically
-	privKey, err := kem.DeriveKeyPair(ikm)
-	if err != nil {
-		return nil, err
-	}
-
-	// extract the public key
-	pubKey := privKey.PublicKey()
-	pubBytes := pubKey.Bytes()
-
-	return pubBytes, nil
+type SuiteConfig struct {
+	KEM  hpke.KEM
+	KDF  hpke.KDF
+	AEAD hpke.AEAD
+	Info []byte
 }
 
-func DeriveKDF() ([]byte, error) {
-	// init HKDF suite
-	kdf := hpke.HKDFSHA256()
-
-	// Generate a random 32 byte key
-	ikm := make([]byte, 32)
-	_, err := rand.Read(ikm)
-	if err != nil {
-		return nil, err
+func NewCryptoSuite() *SuiteConfig {
+	return &SuiteConfig{
+		KEM:  hpke.MLKEM768X25519(),
+		KDF:  hpke.HKDFSHA512(),
+		AEAD: hpke.AES256GCM(),
+		Info: []byte("Beatrice"),
 	}
+}
 
+func NewUserSession() (*types.PubKey, *types.PrivKey) {
+	// init suite algos
+	suite := NewCryptoSuite()
 
+	// derive a new key pair
+	privKey, err := suite.KEM.GenerateKey()
+	if err != nil {
+		// TODO: might not want to panic here, leaving for now
+		panic(err)
+	}
+	pubKey := privKey.PublicKey()
+
+	// serialize the keys
+	pubBytes := pubKey.Bytes()
+	privBytes, err := privKey.Bytes()
+
+	// store inside structs
+	return &types.PubKey{PubKey: pubBytes}, &types.PrivKey{PrivKey: privBytes}
+}
