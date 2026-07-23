@@ -4,6 +4,16 @@ import (
 	"github.com/derkajecht/Beatrice/internal/types"
 )
 
+// NewClientPacket creates a new client packet struct with the given nickname and public key
+func NewClientPacket(nickname string, pubKey []byte) *types.User {
+	return &types.User{
+		Nickname: nickname,
+		Crypto: types.CryptoPacket{
+			PubKey: pubKey,
+		},
+	}
+}
+
 // NewErrPacket creates a new error packet struct with the given error message
 func NewErrPacket(errMsg string) *types.ErrPacket {
 	return &types.ErrPacket{
@@ -12,7 +22,7 @@ func NewErrPacket(errMsg string) *types.ErrPacket {
 }
 
 // NewDirPacket creates a new dir packet struct with the given user list
-func NewDirPacket(GetUserList map[string]string) *types.DirPacket {
+func NewDirPacket(GetUserList map[string][]byte) *types.DirPacket {
 	return &types.DirPacket{
 		CurrentUsers: GetUserList,
 	}
@@ -20,14 +30,14 @@ func NewDirPacket(GetUserList map[string]string) *types.DirPacket {
 
 // GetUserList returns a list of nicknames and their public keys for all connected users
 // except the given nickname
-func GetUserList(r *types.Room, nickname string) map[string]string {
+func GetUserList(r *types.Room, nickname string) map[string][]byte {
 	r.Lock()
 	defer r.Unlock()
 
 	// create a new map to store the user list
 	// and iterate over the clients map if the given nickname is not in the map
 	// (user doesn't get their own information)
-	userList := make(map[string]string)
+	userList := make(map[string][]byte)
 	for _, client := range r.Clients {
 		if client != nil && client.Nickname != nickname {
 			userList[client.Nickname] = client.PubKey

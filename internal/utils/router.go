@@ -20,7 +20,7 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	defer types.ChatRoom.Unlock()
 
 	// check if user already connected
-	if types.ChatRoom.Clients[conn] != nil {
+	if _, ok := types.ChatRoom.GetClient(conn); ok {
 		// build error packet
 		errPacket := models.NewErrPacket("err_user_already_connected")
 		// send error packet to client
@@ -31,7 +31,7 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	}
 
 	// check if nickname and public key are not empty
-	if p.Nickname == "" || p.PubKey == "" {
+	if p.Nickname == "" || p.PubKey == nil {
 		// build error packet
 		errPacket := models.NewErrPacket("err_nickname_or_pubkey_empty")
 		// send error packet to client
@@ -55,11 +55,7 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	}
 
 	// add user to the chat room
-	types.ChatRoom.Clients[conn] = &types.Client{
-		Conn:     conn,
-		Nickname: p.Nickname,
-		PubKey:   p.PubKey,
-	}
+	types.ChatRoom.AddClient(conn, p.Nickname, p.PubKey)
 
 	// get user list of all connected users except the new user
 	list := models.GetUserList(types.ChatRoom, p.Nickname)
@@ -71,7 +67,7 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	err := SendPacketToClient(conn, "d", currentUsers)
 	if err != nil {
 		slog.Error("error sending dir packet", "err", err, "client", conn.RemoteAddr())
-		delete(types.ChatRoom.Clients, conn)
+		types.ChatRoom.RemoveClient(conn)
 		return false, nil
 	}
 	return true, nil

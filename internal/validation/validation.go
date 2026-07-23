@@ -1,4 +1,4 @@
-// Package utils contains utility functions for the project such as validation, listener,
+// Package validation contains utility functions for the project such as validation, listener,
 // responses and router
 package validation
 
@@ -11,6 +11,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/derkajecht/Beatrice/internal/utils"
 )
@@ -20,23 +23,32 @@ func IsEmpty(s string) bool {
 	return s == ""
 }
 
-// IsArgsEmpty return false if any of the inputs are empty
+// IsArgsEmpty returns false if any of the inputs are empty
 func IsArgsEmpty(args ...string) bool {
-	// len of args
-	numArgs := len(args)
-	// check if inputs are empty
-	inputs := make(map[string]string, numArgs)
-	for _, addr := range inputs {
-		if IsEmpty(addr) {
-			return false
+	return !slices.Contains(args, "")
+}
+
+func usernameSanitizer(username string) string {
+	for _, r := range username {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+			username = strings.ReplaceAll(username, string(r), "")
+			// TODO: Draw this to the TUI and log it
+			slog.Warn("Invalid character in username. Replacing with empty character.", "username", username)
 		}
 	}
-	return true
+	return username
 }
 
 // IsValidUsername returns true if the given string is not already taken
-// queries the database
+// also checks username length and sanitizes the username
 func IsValidUsername(db *sql.DB, username string) bool {
+	// Sanitize the username first to remove any invalid characters
+	username = usernameSanitizer(username)
+	if len(username) < 3 {
+		// Draw to TUI and re-prompt the user for a valid username
+		slog.Warn("Username is too short. Please try again.", "username", username)
+		return false // username is too short
+	}
 	// declare a variable to store the number of rows
 	var exists int
 	// check if the username exists in the database
@@ -45,7 +57,8 @@ func IsValidUsername(db *sql.DB, username string) bool {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // username is available
 		}
-		return false // an error occurred
+		// this could be caused by a race condition, so just log the error
+		slog.Error("Error checking if username is available:", "err", err, "username", username)
 	}
 	return false // username is already taken
 }

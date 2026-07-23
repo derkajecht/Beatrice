@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net"
 	"sync"
+
+	"github.com/gammazero/deque"
 )
 
 // GeneralPacket acts as the global Envelope for all network communication.
@@ -15,13 +17,13 @@ type GeneralPacket struct {
 
 type HandshakePacket struct {
 	Nickname string `json:"n"`
-	PubKey   string `json:"k"` // Base64 PEM Identity Key
+	PubKey   []byte `json:"k"` // Base64 PEM Identity Key
 }
 
 type ChallengePacket struct {
 	Nickname    string `json:"n"`
 	PendingAuth string `json:"p"` // Challenge payload to be signed by client
-	PubKey      string `json:"pk"`
+	PubKey      []byte `json:"pk"`
 	IsNew       bool   `json:"new"`
 }
 
@@ -36,16 +38,16 @@ type MessagePacket struct {
 
 type JoinPacket struct {
 	Nickname string `json:"n"`
-	PubKey   string `json:"k"`
+	PubKey   []byte `json:"k"`
 }
 
 type DirPacket struct {
-	CurrentUsers map[string]string `json:"cu"` // map[Nickname]PublicKey
+	CurrentUsers map[string][]byte `json:"cu"` // map[Nickname]PublicKey
 }
 
 type LeavePacket struct {
 	Nickname string `json:"n"`
-	PubKey   string `json:"k"`
+	PubKey   []byte `json:"k"`
 }
 
 type ErrPacket struct {
@@ -57,6 +59,29 @@ type SuccessPacket struct {
 }
 
 // -------------------------------------------------------------------
+// User Models
+// -------------------------------------------------------------------
+// Stores the pub key and nickname of connected users
+type ConnectedUsers struct {
+	Users map[string]string `json:"cu"` // map[Nickname]PublicKey
+}
+
+// Stores the pubkey, privkey, nonces seen, and key cache
+type CryptoPacket struct {
+	PubKey     []byte               `json:"pub"`
+	PrivKey    string               `json:"priv"`
+	SeenNonces *deque.Deque[string] `json:"sn"`
+	KeyCache   map[string]string    `json:"kc"`
+}
+
+// Stores major parts of the user's information
+type User struct {
+	Nickname       string         `json:"n"`
+	Crypto         CryptoPacket   `json:"c"`
+	ConnectedUsers ConnectedUsers `json:"cu"`
+}
+
+// -------------------------------------------------------------------
 // Server Memory Tracking Models
 // -------------------------------------------------------------------
 
@@ -64,7 +89,7 @@ type SuccessPacket struct {
 type Client struct {
 	Conn     net.Conn
 	Nickname string
-	PubKey   string
+	PubKey   []byte
 }
 
 // Room represents a thread-safe chat room instance
@@ -78,6 +103,35 @@ func NewRoom() *Room {
 	return &Room{
 		Clients: make(map[net.Conn]*Client),
 	}
+}
+
+// AddClient adds a new client to the room
+func (r *Room) AddClient(conn net.Conn, nickname string, pubKey []byte) *Client {
+	client := &Client{
+		Conn:     conn,
+		Nickname: nickname,
+		PubKey:   pubKey,
+	}
+	r.Lock()
+	defer r.Unlock()
+	r.Clients[conn] = client
+
+	return client
+}
+
+// GetClient returns a client from the room
+func (r *Room) GetClient(conn net.Conn) (*Client, bool) {
+	r.RLock()
+	defer r.RUnlock()
+	client, ok := r.Clients[conn]
+	return client, ok
+}
+
+// RemoveClient removes a client from the room
+func (r *Room) RemoveClient(conn net.Conn) {
+	r.Lock()
+	defer r.Unlock()
+	delete(r.Clients, conn)
 }
 
 // ChatRoom is the global thread-safe active memory map
