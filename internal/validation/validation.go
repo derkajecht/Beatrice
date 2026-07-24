@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/derkajecht/Beatrice/internal/storage"
 	"github.com/derkajecht/Beatrice/internal/utils"
 )
 
@@ -23,9 +24,9 @@ func IsEmpty(s string) bool {
 	return s == ""
 }
 
-// IsArgsEmpty returns false if any of the inputs are empty
-func IsArgsEmpty(args ...string) bool {
-	return !slices.Contains(args, "")
+// HasArgsEmpty returns false if any of the inputs are empty
+func HasArgsEmpty(args ...string) bool {
+	return slices.Contains(args, "")
 }
 
 func usernameSanitizer(username string) string {
@@ -41,7 +42,7 @@ func usernameSanitizer(username string) string {
 
 // IsValidUsername returns true if the given string is not already taken
 // also checks username length and sanitizes the username
-func IsValidUsername(db *sql.DB, username string) bool {
+func IsValidUsername(username string) bool {
 	// Sanitize the username first to remove any invalid characters
 	username = usernameSanitizer(username)
 	if len(username) < 3 {
@@ -49,10 +50,17 @@ func IsValidUsername(db *sql.DB, username string) bool {
 		slog.Warn("Username is too short. Please try again.", "username", username)
 		return false // username is too short
 	}
+	// ping the db first
+	db, err := storage.Pingdb()
+	if err != nil {
+		slog.Error("Error pinging database:", "err", err)
+		return false
+	}
+
 	// declare a variable to store the number of rows
 	var exists int
 	// check if the username exists in the database
-	err := db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&exists)
+	err = db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&exists)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // username is available

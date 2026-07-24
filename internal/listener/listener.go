@@ -139,7 +139,7 @@ func HandleConnection(conn net.Conn) {
 
 		// clear the buffer after use and put it back into the pool
 		clear(buf)
-		bufferPool.Put(&buf)
+		bufferPool.Put(buf)
 
 	}
 }

@@ -1,20 +1,21 @@
+// Package crypto provides cryptographic utilities for Beatrice.
+// It includes functions for generating new key pairs, serializing keys, and more.
+// Called by the client on startup to generate a new key pair and store it memory.
 package crypto
 
 import (
+	"fmt"
+
 	"crypto/hpke"
 
 	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/gammazero/deque"
 )
 
-type SuiteConfig struct {
-	KEM  hpke.KEM
-	KDF  hpke.KDF
-	AEAD hpke.AEAD
-	Info []byte
-}
+//
 
-func NewCryptoSuite() *SuiteConfig {
-	return &SuiteConfig{
+func NewCryptoSuite() *types.SuiteConfig {
+	return &types.SuiteConfig{
 		KEM:  hpke.MLKEM768X25519(),
 		KDF:  hpke.HKDFSHA512(),
 		AEAD: hpke.AES256GCM(),
@@ -22,22 +23,35 @@ func NewCryptoSuite() *SuiteConfig {
 	}
 }
 
-func NewUserSession() (*types.PubKey, *types.PrivKey) {
-	// init suite algos
+// NewUserSession returns a new ephemeral key pair and session.
+func NewUserSession() (*types.PubKey, *types.PrivKey, *types.CryptoPacket, error) {
 	suite := NewCryptoSuite()
 
-	// derive a new key pair
 	privKey, err := suite.KEM.GenerateKey()
 	if err != nil {
-		// TODO: might not want to panic here, leaving for now
-		panic(err)
+		return nil, nil, nil, fmt.Errorf("failed to generate private key: %w", err)
 	}
-	pubKey := privKey.PublicKey()
 
-	// serialize the keys
-	pubBytes := pubKey.Bytes()
+	pubBytes := privKey.PublicKey().Bytes()
 	privBytes, err := privKey.Bytes()
+	if err != nil {
+		// NOTE: should i be returning this or just logging it?
+		return nil, nil, nil, fmt.Errorf("failed to serialize private key bytes: %w", err)
+	}
 
-	// store inside structs
-	return &types.PubKey{PubKey: pubBytes}, &types.PrivKey{PrivKey: privBytes}
+	privKeyPacket := types.PrivKey{
+		PrivKey: privBytes,
+	}
+	pubKeyPacket := types.PubKey{
+		PubKey: pubBytes,
+	}
+	cryptoPacket := &types.CryptoPacket{
+		Suite:      suite,
+		PrivKey:    privKeyPacket,
+		PubKey:     pubKeyPacket,
+		SeenNonces: new(deque.Deque[string]),
+		KeyCache:   make(map[string]string),
+	}
+
+	return &cryptoPacket.PubKey, &cryptoPacket.PrivKey, cryptoPacket, nil
 }

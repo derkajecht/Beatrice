@@ -6,18 +6,19 @@ import (
 
 	"github.com/derkajecht/Beatrice/internal/models"
 	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/derkajecht/Beatrice/internal/validation"
 )
 
 func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
-	// TODO: Implement handshake logic
 	// client should send a message packet with the following data:
 	// {"t":"h", "n": nickname,	"k": pubkey}
 	// server should send a handshake packet to the client containing a success message
 	// and all connected users
 
+	// NOTE: could use channels instead of mutexes - non-blocking
 	// safely read and write to the ChatRoom map
-	types.ChatRoom.Lock()
-	defer types.ChatRoom.Unlock()
+	types.ChatRoom.RLock()
+	defer types.ChatRoom.RUnlock()
 
 	// check if user already connected
 	if _, ok := types.ChatRoom.GetClient(conn); ok {
@@ -31,7 +32,8 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 	}
 
 	// check if nickname and public key are not empty
-	if p.Nickname == "" || p.PubKey == nil {
+	j := validation.HasArgsEmpty(p.Nickname, string(p.PubKey.PubKey))
+	if !j {
 		// build error packet
 		errPacket := models.NewErrPacket("err_nickname_or_pubkey_empty")
 		// send error packet to client
@@ -41,17 +43,15 @@ func HandleHandshake(p types.HandshakePacket, conn net.Conn) (bool, error) {
 		return false, nil
 	}
 
-	// check if nickname is already in use
-	for _, client := range types.ChatRoom.Clients {
-		if client.Nickname == p.Nickname {
-			// build error packet
-			errPacket := models.NewErrPacket("err_nickname_taken")
-			// send error packet to client
-			// this should trigger the UI to display an error message and return the user to the lobby
-			err := SendPacketToClient(conn, "e", errPacket)
-			slog.Error("nickname already taken", "err", err, "client", conn.RemoteAddr())
-			return false, nil
-		}
+	j = validation.IsValidUsername(p.Nickname)
+	if !j {
+		// build error packet
+		errPacket := models.NewErrPacket("err_nickname_taken")
+		// send error packet to client
+		// this should trigger the UI to display an error message and return the user to the lobby
+		err := SendPacketToClient(conn, "e", errPacket)
+		slog.Error("nickname already taken", "err", err, "client", conn.RemoteAddr())
+		return false, nil
 	}
 
 	// add user to the chat room

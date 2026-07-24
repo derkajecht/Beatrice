@@ -6,7 +6,16 @@ import (
 
 	"github.com/derkajecht/Beatrice/internal/api"
 	"github.com/derkajecht/Beatrice/internal/storage"
+	"github.com/derkajecht/Beatrice/internal/types"
 )
+
+func ServerStruct(dbLocation string) *types.Server {
+	return &types.Server{
+		ActiveConnections:  make(map[string]map[string]string),
+		PendingConnections: make(map[string]string),
+		DatabasePath:       dbLocation,
+	}
+}
 
 // RunServer starts a new server instance and a new database connection
 // It takes the host, port, and database name as arguments
@@ -29,6 +38,9 @@ func RunServer(host, port, conType, dbName, dbLocation string) {
 	// log that the database connection was established
 	log.Println("Database connection established")
 
+	// store the database path in the server struct
+	ServerStruct(dbLocation)
+
 	// Defer the closing of the database connection to ensure that it is properly closed
 	defer db.Close()
 }
@@ -49,5 +61,5 @@ func main() {
 	RunServer(*host, *port, *conType, *dbName, *dbLocation)
 
 	// example usage:
-	// go run main.go -host localhost -port 8080 -contype tcp -db beatrice.db
+	// go run main.go -host localhost -port 8080 -contype tcp -db beatrice.db -dbloc ./beatrice
 }

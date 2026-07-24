@@ -9,9 +9,28 @@ import (
 	"path/filepath"
 
 	"github.com/derkajecht/Beatrice/internal/config"
+	"github.com/derkajecht/Beatrice/internal/types"
 	"github.com/derkajecht/Beatrice/internal/validation"
 	_ "modernc.org/sqlite"
 )
+
+func Pingdb() (*sql.DB, error) {
+	cfg := config.NewDatabaseInfo()
+	// enable foreign key constraints
+	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
+	// open the database connection
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// check if the database is accessible
+	if err := db.Ping(); err != nil {
+		db.Close() // clean up on failure
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	return db, nil
+}
 
 // NewDatabase initializes a new database connection
 // and checks if the connection is successful
@@ -22,7 +41,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	cfg := config.NewDatabaseInfo()
 
 	// loop through the inputs and assign the default values to the cfg struct if empty
-	if validation.IsArgsEmpty(dbName, dbLocation) {
+	if validation.HasArgsEmpty(dbName, dbLocation) {
 		slog.Warn("No database name or location provided: Defaulting to beatrice.db and ./beatrice")
 		return nil, "", fmt.Errorf("no database name or location provided")
 	}
@@ -46,19 +65,10 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 		return nil, "", fmt.Errorf("failed to create target directory: %w", err)
 	}
 
-	// enable foreign key constraints
-	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
-
 	// open the database connection
-	db, err := sql.Open("sqlite", dsn)
+	db, err := Pingdb()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// check if the database is accessible
-	if err := db.Ping(); err != nil {
-		db.Close() // clean up on failure
-		return nil, "", fmt.Errorf("failed to ping database: %w", err)
+		return nil, "", fmt.Errorf("failed to attach database: %w", err)
 	}
 
 	schema := `
@@ -91,4 +101,29 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	log.Println("Database initialized successfully")
 
 	return db, cfg.Location, nil
+}
+
+// StoreUser adds a new user to the database - nickname and public key
+func StoreUser(u *types.User) error {
+	db, err := Pingdb()
+	if err != nil {
+		return fmt.Errorf("failed to attach database: %w", err)
+	}
+
+	// get user nickname and public key from the user struct
+	nickname := u.Nickname
+	publicKey := u.Crypto.PubKey
+
+	// create a prepared statement
+	schema := `
+		INSERT INTO users (nickname, public_key)
+		VALUES (?, ?);`
+
+	// add user nickname and public key to the db
+	_, err = db.Exec(schema, nickname, publicKey)
+	if err != nil {
+		db.Close() // clean up on failure
+		return fmt.Errorf("failed to create database schema: %w", err)
+	}
+	return nil
 }

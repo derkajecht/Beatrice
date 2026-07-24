@@ -1,11 +1,11 @@
 package types
 
 import (
+	"crypto/hpke"
 	"encoding/json"
 	"net"
 	"sync"
 
-	"github.com/derkajecht/Beatrice/internal/crypto"
 	"github.com/gammazero/deque"
 )
 
@@ -67,17 +67,26 @@ type ConnectedUsers struct {
 	Users map[string]string `json:"cu"` // map[Nickname]PublicKey
 }
 
-// Created these to stop repeating myself. Also allows for setting one struct instead of 5000
+// PubKey holds public key bytes for JSON serialization.
 type PubKey struct {
 	PubKey []byte `json:"k"`
 }
+
+// PrivKey holds private key bytes for JSON serialization.
 type PrivKey struct {
 	PrivKey []byte `json:"k"`
 }
 
+type SuiteConfig struct {
+	KEM  hpke.KEM  `json:"kem"`
+	KDF  hpke.KDF  `json:"kdf"`
+	AEAD hpke.AEAD `json:"aead"`
+	Info []byte    `json:"info"`
+}
+
 // Stores the pubkey, privkey, nonces seen, and key cache
 type CryptoPacket struct {
-	Suite      crypto.SuiteConfig   `json:"s"`
+	Suite      *SuiteConfig         `json:"s"`
 	PrivKey    PrivKey              `json:"priv"`
 	PubKey     PubKey               `json:"pub"`
 	SeenNonces *deque.Deque[string] `json:"sn"`
@@ -94,6 +103,12 @@ type User struct {
 // -------------------------------------------------------------------
 // Server Memory Tracking Models
 // -------------------------------------------------------------------
+
+type Server struct {
+	ActiveConnections  map[string]map[string]string `json:"ac"`  // map of current active users - "jordan": {"conn": 1234, "pk": "-----BEGIN PUBLIC KEY..."}
+	PendingConnections map[string]string            `json:"pc"`  // once handshake is confirmed, this will store "jordan": "-----BEGIN PUBLIC KEY..." and then be passed to connection method
+	DatabasePath       string                       `json:"dbp"` // path to the database, stored in memory
+}
 
 // Client represents a fully authenticated server-side active connection tracking state
 type Client struct {

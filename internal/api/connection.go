@@ -19,7 +19,7 @@ func NewServer(host, port, conType string) error {
 
 	// Check if the port and host are empty
 	// if yes, default values are set automatically
-	if validation.IsArgsEmpty(host, port, conType) {
+	if validation.HasArgsEmpty(host, port, conType) {
 		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
 
@@ -64,7 +64,7 @@ func NewClient(host, port, conType string) error {
 
 	// Check if the port and host are empty
 	// if yes, default values are set automatically
-	if validation.IsArgsEmpty(host, port, conType) {
+	if validation.HasArgsEmpty(host, port, conType) {
 		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
 
