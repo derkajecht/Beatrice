@@ -11,25 +11,14 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"slices"
 	"strings"
 	"unicode"
 
-	"github.com/derkajecht/Beatrice/internal/storage"
-	"github.com/derkajecht/Beatrice/internal/utils"
+	"github.com/derkajecht/Beatrice/internal/server/config"
+	"github.com/derkajecht/Beatrice/internal/shared/utils"
 )
 
-// IsEmpty returns true if the given string is empty
-func IsEmpty(s string) bool {
-	return s == ""
-}
-
-// HasArgsEmpty returns false if any of the inputs are empty
-func HasArgsEmpty(args ...string) bool {
-	return slices.Contains(args, "")
-}
-
-func usernameSanitizer(username string) string {
+func UsernameSanitizer(username string) string {
 	for _, r := range username {
 		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
 			username = strings.ReplaceAll(username, string(r), "")
@@ -44,14 +33,14 @@ func usernameSanitizer(username string) string {
 // also checks username length and sanitizes the username
 func IsValidUsername(username string) bool {
 	// Sanitize the username first to remove any invalid characters
-	username = usernameSanitizer(username)
+	username = UsernameSanitizer(username)
 	if len(username) < 3 {
 		// Draw to TUI and re-prompt the user for a valid username
 		slog.Warn("Username is too short. Please try again.", "username", username)
 		return false // username is too short
 	}
 	// ping the db first
-	db, err := storage.Pingdb()
+	db, err := Pingdb()
 	if err != nil {
 		slog.Error("Error pinging database:", "err", err)
 		return false
@@ -81,6 +70,24 @@ func IsValidLocation(location string) (bool, error) {
 		return false, fmt.Errorf("failed to open location: %w", err)
 	}
 	return true, nil
+}
+
+func Pingdb() (*sql.DB, error) {
+	cfg := config.NewDatabaseInfo()
+	// enable foreign key constraints
+	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
+	// open the database connection
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// check if the database is accessible
+	if err := db.Ping(); err != nil {
+		db.Close() // clean up on failure
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	return db, nil
 }
 
 // UnmarshalPacket unmarshals the given buffer and returns the envelope struct and error

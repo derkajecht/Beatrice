@@ -8,29 +8,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/derkajecht/Beatrice/internal/config"
-	"github.com/derkajecht/Beatrice/internal/types"
-	"github.com/derkajecht/Beatrice/internal/validation"
+	"github.com/derkajecht/Beatrice/internal/server/config"
+	"github.com/derkajecht/Beatrice/internal/server/validation"
+	"github.com/derkajecht/Beatrice/internal/shared/sharedvalidation"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 	_ "modernc.org/sqlite"
 )
-
-func Pingdb() (*sql.DB, error) {
-	cfg := config.NewDatabaseInfo()
-	// enable foreign key constraints
-	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
-	// open the database connection
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// check if the database is accessible
-	if err := db.Ping(); err != nil {
-		db.Close() // clean up on failure
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-	return db, nil
-}
 
 // NewDatabase initializes a new database connection
 // and checks if the connection is successful
@@ -41,7 +24,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	cfg := config.NewDatabaseInfo()
 
 	// loop through the inputs and assign the default values to the cfg struct if empty
-	if validation.HasArgsEmpty(dbName, dbLocation) {
+	if sharedvalidation.HasEmptyArgs(dbName, dbLocation) {
 		slog.Warn("No database name or location provided: Defaulting to beatrice.db and ./beatrice")
 		return nil, "", fmt.Errorf("no database name or location provided")
 	}
@@ -66,7 +49,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	}
 
 	// open the database connection
-	db, err := Pingdb()
+	db, err := validation.Pingdb()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to attach database: %w", err)
 	}
@@ -105,7 +88,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 
 // StoreUser adds a new user to the database - nickname and public key
 func StoreUser(u *types.User) error {
-	db, err := Pingdb()
+	db, err := validation.Pingdb()
 	if err != nil {
 		return fmt.Errorf("failed to attach database: %w", err)
 	}

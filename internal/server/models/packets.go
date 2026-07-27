@@ -1,7 +1,7 @@
 package models
 
 import (
-	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
 
 // NewClientPacket creates a new client packet struct with the given nickname and public key
@@ -9,7 +9,9 @@ func NewClientPacket(nickname string, pubKey []byte) *types.User {
 	return &types.User{
 		Nickname: nickname,
 		Crypto: types.CryptoPacket{
-			PubKey: pubKey,
+			PubKey: types.PubKey{
+				PubKey: pubKey,
+			},
 		},
 	}
 }
@@ -40,7 +42,7 @@ func GetUserList(r *types.Room, nickname string) map[string][]byte {
 	userList := make(map[string][]byte)
 	for _, client := range r.Clients {
 		if client != nil && client.Nickname != nickname {
-			userList[client.Nickname] = client.PubKey
+			userList[client.Nickname] = client.PubKey.PubKey
 		}
 	}
 	return userList

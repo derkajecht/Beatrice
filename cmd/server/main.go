@@ -5,8 +5,8 @@ import (
 	"log"
 
 	"github.com/derkajecht/Beatrice/internal/api"
-	"github.com/derkajecht/Beatrice/internal/storage"
-	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/derkajecht/Beatrice/internal/server/storage"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
 
 func ServerStruct(dbLocation string) *types.Server {

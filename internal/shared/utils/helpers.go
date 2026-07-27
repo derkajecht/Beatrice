@@ -5,7 +5,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net"
+
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
+
+type User struct {
+	*types.User
+}
 
 // func ClearBuffer(buffer []byte) {
 // 	clear(buffer)
@@ -27,4 +33,14 @@ func UnmarshalPacket(conn net.Conn, buf []byte, n int, env any) error {
 		return err
 	}
 	return nil
+}
+
+// GetPublicKey returns the public key of the user
+func (u *User) GetPublicKey() []byte {
+	return u.Crypto.PubKey.PubKey
+}
+
+// GetNickname returns the nickname of the user
+func (u *User) GetNickname() string {
+	return u.Nickname
 }

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
 
 // TODO: Could rename SendStatus to capture both success and error packets

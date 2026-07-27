@@ -8,7 +8,7 @@ import (
 
 	"crypto/hpke"
 
-	"github.com/derkajecht/Beatrice/internal/types"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 	"github.com/gammazero/deque"
 )
 

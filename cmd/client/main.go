@@ -4,7 +4,7 @@ import (
 	"flag"
 
 	"github.com/derkajecht/Beatrice/internal/api"
-	"github.com/derkajecht/Beatrice/internal/crypto"
+	"github.com/derkajecht/Beatrice/internal/client/crypto"
 )
 
 // StartClient establishes a connection to the server using the host and port provided.

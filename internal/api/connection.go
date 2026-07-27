@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/config"
-	listenerpkg "github.com/derkajecht/Beatrice/internal/listener"
-	"github.com/derkajecht/Beatrice/internal/validation"
+	"github.com/derkajecht/Beatrice/internal/server/config"
+	listenerpkg "github.com/derkajecht/Beatrice/internal/server/listener"
+	"github.com/derkajecht/Beatrice/internal/shared/sharedvalidation"
 )
 
 // NewServer initializes a new server instance
@@ -19,7 +19,7 @@ func NewServer(host, port, conType string) error {
 
 	// Check if the port and host are empty
 	// if yes, default values are set automatically
-	if validation.HasArgsEmpty(host, port, conType) {
+	if sharedvalidation.HasEmptyArgs(host, port, conType) {
 		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
 
@@ -64,7 +64,7 @@ func NewClient(host, port, conType string) error {
 
 	// Check if the port and host are empty
 	// if yes, default values are set automatically
-	if validation.HasArgsEmpty(host, port, conType) {
+	if sharedvalidation.HasEmptyArgs(host, port, conType) {
 		slog.Warn("No host, port or connection type provided: Defaulting to localhost:8080 and tcp")
 	}
 
