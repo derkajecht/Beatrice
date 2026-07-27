@@ -14,8 +14,7 @@ import (
 
 // HandleHandshake validates and creates client session
 func HandleHandshake(p types.HandshakePacket, conn net.Conn) bool {
-	types.ChatRoom.RLock()
-	defer types.ChatRoom.RUnlock()
+	// NOTE: do i need to add any RLock() or RUnlock() here?
 
 	if _, ok := types.ChatRoom.GetClient(conn); ok {
 		errPacket := models.NewErrPacket("err_user_already_connected")
@@ -78,4 +77,3 @@ func HandleDir(p types.DirPacket, conn net.Conn) {}
 
 // HandleChallenge processes authentication challenges - todo
 func HandleChallenge(p types.ChallengePacket, conn net.Conn) {}
-

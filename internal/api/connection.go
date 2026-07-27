@@ -77,15 +77,16 @@ func NewClient(host, port, conType string) error {
 	// Join the host and port strings to create the address
 	address := net.JoinHostPort(cfg.Host, cfg.Port)
 
-	// conn.Close() called inside listenerpkg.HandleConnection. No need to close here.
-	for {
-		// Call net.Dial to connect to the server
-		conn, err := net.Dial(cfg.ConType, address)
-		if err != nil {
-			return fmt.Errorf("failed to connect to server %s:%s, %s: %w", cfg.Host, cfg.Port, cfg.ConType, err)
-		}
-
-		// handle the connection in a new goroutine (see listenerpkg.HandleConnection)
-		go listenerpkg.HandleConnection(conn)
+	// Call net.Dial to connect to the server
+	conn, err := net.Dial(cfg.ConType, address)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server %s:%s, %s: %w", cfg.Host, cfg.Port, cfg.ConType, err)
 	}
+
+	// handle the connection in a new goroutine (see listenerpkg.HandleConnection)
+	if err := listenerpkg.HandleConnection(conn); err != nil {
+		return fmt.Errorf("failed to handle connection: %w", err)
+	}
+
+	return nil
 }

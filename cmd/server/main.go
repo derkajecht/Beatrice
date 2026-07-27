@@ -22,12 +22,6 @@ func ServerStruct(dbLocation string) *types.Server {
 // It returns an error if the host, port, or database name is empty
 func RunServer(host, port, conType, dbName, dbLocation string) {
 
-	// create a new server instance and pass the database connection
-	go api.NewServer(host, port, conType)
-
-	// log that the server was started
-	log.Println("Server started")
-
 	// create a new database instance and pass the database connection
 	// NewDatabase checks if the database is accessible and returns an error if not
 	// if the database is accessible, it returns a pointer to the database connection
@@ -35,14 +29,18 @@ func RunServer(host, port, conType, dbName, dbLocation string) {
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
+	defer db.Close()
+	// store the database path in the server struct
+	ServerStruct(dbLocation)
 	// log that the database connection was established
 	log.Println("Database connection established")
 
-	// store the database path in the server struct
-	ServerStruct(dbLocation)
+	// create a new server instance and pass the database connection
+	if err := api.NewServer(host, port, conType); err != nil {
+		log.Fatalf("Could not start server: %v\n", err)
+	}
 
 	// Defer the closing of the database connection to ensure that it is properly closed
-	defer db.Close()
 }
 
 func main() {

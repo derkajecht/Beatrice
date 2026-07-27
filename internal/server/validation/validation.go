@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/derkajecht/Beatrice/internal/server/config"
+	"github.com/derkajecht/Beatrice/internal/shared/types"
 	"github.com/derkajecht/Beatrice/internal/shared/utils"
 )
 
@@ -49,7 +50,7 @@ func IsValidUsername(username string) bool {
 	// declare a variable to store the number of rows
 	var exists int
 	// check if the username exists in the database
-	err = db.QueryRow("SELECT id FROM users WHERE username = ?", username).Scan(&exists)
+	err = db.QueryRow("SELECT id FROM users WHERE nickname = ?", username).Scan(&exists)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true // username is available
@@ -72,6 +73,8 @@ func IsValidLocation(location string) (bool, error) {
 	return true, nil
 }
 
+// Pingdb checks if the database is accessible
+// uses the location and name from the config struct. No need to pass it in.
 func Pingdb() (*sql.DB, error) {
 	cfg := config.NewDatabaseInfo()
 	// enable foreign key constraints
@@ -98,7 +101,9 @@ func UnmarshalPacket(conn net.Conn, buf []byte, n int, env any) error {
 		slog.Error("Error unmarshalling envelope:", "err", err, "client", conn.RemoteAddr())
 
 		// Send error packet to client
-		utils.SendError(conn, "invalid_protocol_format")
+		utils.SendPacketToClient(conn, "e", &types.ErrPacket{
+			Message: "invalid_protocol_format",
+		})
 
 		return err
 	}

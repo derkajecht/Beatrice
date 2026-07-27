@@ -11,30 +11,6 @@ import (
 
 // TODO: Could rename SendStatus to capture both success and error packets
 
-// SendError sends a error packet to the client
-func SendError(conn net.Conn, errMsg string) bool {
-	// set up error packet struct
-	errPacket := types.ErrPacket{
-		Message: errMsg,
-	}
-
-	// marshal error packet struct to JSON
-	buf, marshalErr := json.Marshal(errPacket)
-	if marshalErr != nil {
-		slog.Error("Error marshalling error packet:", "err", marshalErr, "client", conn.RemoteAddr())
-		return false
-	}
-
-	// write JSON to connection
-	_, writeErr := conn.Write(buf)
-	if writeErr != nil {
-		slog.Error("Error writing error packet to connection:", "err", writeErr, "client", conn.RemoteAddr())
-		return false
-	}
-
-	return true
-}
-
 // SendPacketToClient sends a packet or message to the client
 // and returns an error if any
 func SendPacketToClient(conn net.Conn, packetType string, innerPacket any) error {
@@ -78,6 +54,8 @@ func SendPacketToClient(conn net.Conn, packetType string, innerPacket any) error
 
 // DisconnectAndQuit closes the connection and quits the application
 func DisconnectAndQuit(conn net.Conn) {
-	SendError(conn, "err_connection_closed")
+	SendPacketToClient(conn, "q", &types.ErrPacket{
+		Message: "err_connection_closed",
+	})
 	conn.Close()
 }

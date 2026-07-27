@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"sync"
 
 	"github.com/derkajecht/Beatrice/internal/api"
 	"github.com/derkajecht/Beatrice/internal/client/crypto"
@@ -39,7 +40,13 @@ func main() {
 	flag.Parse()
 
 	// start the client with the host and port provided
-	StartClient(*host, *port, *conType)
+	// NOTE: can i put this in a goroutine?
+	wg := new(sync.WaitGroup)
+	wg.Add(1) // add a wait group to ensure the server is closed after the main function is done
+	wg.Go(func() {
+		StartClient(*host, *port, *conType)
+	})
+	wg.Wait() // wait for the server to close
 
 	// example usage:
 	// go run main.go -host localhost -port 8080 -contype tcp

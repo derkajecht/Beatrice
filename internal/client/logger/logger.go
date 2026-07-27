@@ -28,18 +28,3 @@ func LoggerSetup() {
 	// Create the handler and default logger
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&ChannelWriter{Ch: logCh}, nil)))
 }
-
-func main() {
-	// // Setup logger and grab the consumer channel
-	// logChan := LoggerSetup()
-	//
-	// // Test logging
-	// slog.Info("System starting up...", "version", "1.0.0")
-
-	// Simulated TUI listening loop
-	// this would be called in a goroutine inside the tui
-	// then you can read from that channel and act on the logs
-	// logBytes := <-logChan
-	// println(string(logBytes))
-}
-
