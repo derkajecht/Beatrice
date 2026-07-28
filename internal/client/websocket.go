@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/derkajecht/Beatrice/internal/client/tui"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
@@ -15,7 +16,7 @@ import (
 func NewChatClient(ctx context.Context, addr string) (User, error) {
 
 	// Open client connection to the server using the host and port provided
-	maxDelay := 30 * time.Second
+	maxDelay := 10 * time.Second
 	delay := time.Second
 
 	for {
@@ -41,19 +42,25 @@ func NewChatClient(ctx context.Context, addr string) (User, error) {
 		}
 
 		// run readloop in a goroutine for async reading
-		go client.readLoop(ctx)
+		if err := client.readLoop(ctx); err != nil {
+			slog.Error("Error reading from websocket connection", "err", err)
+			return User{}, err
+		}
 
+		// NOTE: not sure if this is needed
+		defer client.Conn.Close(websocket.StatusInternalError, "Client closed")
+		return client, nil
 	}
 }
 
-func (u User) readLoop(ctx context.Context) {
+func (u User) readLoop(ctx context.Context) error {
 	defer u.Conn.CloseNow()
 
 	for {
 		_, msg, err := u.Conn.Read(ctx)
 		if err != nil {
 			slog.Error("Error reading from websocket connection", "err", err)
-			return
+			return fmt.Errorf("error reading from websocket connection: %w", err)
 		}
 
 		// send msg to the hub
@@ -78,11 +85,16 @@ func StartClient(host, port string) {
 		port = "8080"
 	}
 
+	// setup the logger and read-only channel for the TUI
+	// start the TUI in a goroutine - non-blocking
+	logCh := LoggerSetup()
+	go tui.NewTUI(logCh)
+
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
 	_, _, err := NewUserSession()
 	if err != nil {
-		println("Error generating user session:", err)
+		slog.Error("Error generating user session", "err", err)
 		return
 	}
 
@@ -93,16 +105,16 @@ func StartClient(host, port string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	slog.Info("Connecting to server", "addr", addr)
 	chatClient, err := NewChatClient(ctx, addr)
 	if err != nil {
 		slog.Error("Error connecting to server", "err", err)
 		return
 	}
-	defer chatClient.Conn.Close(200, "Goodbye")
-
-	// connect with backoff
-	NewChatClient(ctx, addr)
+	slog.Info("Connected to server", "connected", true, "addr", addr)
+	// close the connection when the TUI exits
+	// 1000 is the close code for normal closure
+	defer chatClient.Conn.Close(1000, "Goodbye")
+	slog.Info("Closing connection", "connected", false) // slog message to inform the tui that connection is closed
 
 	// TODO: call to start the tui
 }

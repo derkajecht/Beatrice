@@ -12,8 +12,7 @@ import (
 	"github.com/gammazero/deque"
 )
 
-//
-
+// NewCryptoSuite returns a new crypto suite with the default settings.
 func NewCryptoSuite() SuiteConfig {
 	return SuiteConfig{
 		KEM:  hpke.MLKEM768X25519(),
@@ -23,21 +22,21 @@ func NewCryptoSuite() SuiteConfig {
 	}
 }
 
-func CryptoPacketToPubKey(crypto CryptoPacket) shared.PubKey {
-	return shared.PubKey{
-		PubKey: crypto.PubKey,
-	}
-}
-
 // NewUserSession returns a new ephemeral key pair and session.
+// this would return on failure to generate a new key pair
 func NewUserSession() (shared.PubKey, CryptoPacket, error) {
 	suite := NewCryptoSuite()
 
+	// generate private key using the crypto suite
 	privKey, err := suite.KEM.GenerateKey()
 	if err != nil {
 		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("failed to generate private key: %w", err)
 	}
+	if privKey == nil {
+		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("private key is nil")
+	}
 
+	// derive the public key from the private key and convert both to bytes
 	pubBytes := privKey.PublicKey().Bytes()
 	privBytes, err := privKey.Bytes()
 	if err != nil {
@@ -47,7 +46,7 @@ func NewUserSession() (shared.PubKey, CryptoPacket, error) {
 
 	// create a new crypto packet with the generated key pair
 	// add the public key to the crypto packet and to the shared PubKey struct
-	cryptoPacket := CryptoPacket{
+	cryptoPacket := &CryptoPacket{
 		Suite:      suite,
 		PrivKey:    privBytes,
 		PubKey:     pubBytes,
@@ -55,5 +54,5 @@ func NewUserSession() (shared.PubKey, CryptoPacket, error) {
 		KeyCache:   make(map[string]string),
 	}
 
-	return shared.PubKey{PubKey: cryptoPacket.PubKey}, cryptoPacket, nil
+	return shared.PubKey{PubKey: cryptoPacket.PubKey}, *cryptoPacket, nil
 }

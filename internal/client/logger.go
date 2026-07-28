@@ -21,10 +21,12 @@ func (w *ChannelWriter) Write(p []byte) (int, error) {
 }
 
 // LoggerSetup initializes slog and returns the read-only channel for your TUI
-func LoggerSetup() {
+func LoggerSetup() <-chan []byte {
 	// Create a buffered channel so logging won't instantly block
 	logCh := make(chan []byte, 100)
 
 	// Create the handler and default logger
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&ChannelWriter{Ch: logCh}, nil)))
+
+	return logCh
 }
