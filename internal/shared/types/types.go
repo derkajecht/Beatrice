@@ -3,9 +3,9 @@ package types
 import (
 	"crypto/hpke"
 	"encoding/json"
-	"net"
 	"sync"
 
+	"github.com/coder/websocket"
 	"github.com/gammazero/deque"
 )
 
@@ -110,28 +110,29 @@ type Server struct {
 	DatabasePath       string                       `json:"dbp"` // path to the database, stored in memory
 }
 
-// Client represents a fully authenticated server-side active connection tracking state
-type Client struct {
-	Conn     net.Conn
-	Nickname string
-	PubKey   PubKey
-}
-
 // Room represents a thread-safe chat room instance
 type Room struct {
 	sync.RWMutex // Upgraded to RWMutex for high-performance concurrent reads
-	Clients      map[net.Conn]*Client
+	Clients      map[*websocket.Conn]*Client
 }
 
 // NewRoom acts as a reliable constructor for room instances
 func NewRoom() *Room {
 	return &Room{
-		Clients: make(map[net.Conn]*Client),
+		Clients: make(map[*websocket.Conn]*Client),
 	}
 }
 
+// Client represents a fully authenticated server-side active connection tracking state
+type Client struct {
+	Conn     *websocket.Conn
+	Nickname string
+	PubKey   PubKey
+	TuiChan  chan []byte
+}
+
 // AddClient adds a new client to the room
-func (r *Room) AddClient(conn net.Conn, nickname string, pubKey PubKey) *Client {
+func (r *Room) AddClient(conn *websocket.Conn, nickname string, pubKey PubKey) *Client {
 	client := &Client{
 		Conn:     conn,
 		Nickname: nickname,
@@ -145,7 +146,7 @@ func (r *Room) AddClient(conn net.Conn, nickname string, pubKey PubKey) *Client 
 }
 
 // GetClient returns a client from the room
-func (r *Room) GetClient(conn net.Conn) (*Client, bool) {
+func (r *Room) GetClient(conn *websocket.Conn) (*Client, bool) {
 	r.RLock()
 	defer r.RUnlock()
 	client, ok := r.Clients[conn]
@@ -153,7 +154,7 @@ func (r *Room) GetClient(conn net.Conn) (*Client, bool) {
 }
 
 // RemoveClient removes a client from the room
-func (r *Room) RemoveClient(conn net.Conn) {
+func (r *Room) RemoveClient(conn *websocket.Conn) {
 	r.Lock()
 	defer r.Unlock()
 	delete(r.Clients, conn)

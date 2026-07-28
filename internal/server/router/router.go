@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/coder/websocket"
 	"github.com/derkajecht/Beatrice/internal/server/helpers"
 	"github.com/derkajecht/Beatrice/internal/server/models"
 	"github.com/derkajecht/Beatrice/internal/server/validation"
@@ -13,10 +14,10 @@ import (
 )
 
 // HandleHandshake validates and creates client session
-func HandleHandshake(p types.HandshakePacket, conn net.Conn) bool {
+func HandleHandshake(c *websocket.Conn, p types.User) bool {
 	// NOTE: do i need to add any RLock() or RUnlock() here?
 
-	if _, ok := types.ChatRoom.GetClient(conn); ok {
+	if _, ok := websocket.Hub.clients[c]; ok {
 		errPacket := models.NewErrPacket("err_user_already_connected")
 		utils.SendPacketToClient(conn, "e", errPacket)
 		slog.Error("user already connected", "client", conn.RemoteAddr())
