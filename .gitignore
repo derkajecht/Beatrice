@@ -210,3 +210,6 @@ __marimo__/
 /beatrice-client
 /beatrice-server
 /dist/
+
+# wtp
+.wtp.yml
