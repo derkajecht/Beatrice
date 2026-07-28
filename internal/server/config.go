@@ -1,4 +1,4 @@
-package config
+package server
 
 type ConnectionInfo struct {
 	Host    string

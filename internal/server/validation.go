@@ -1,6 +1,6 @@
 // Package validation contains utility functions for the project such as validation, listener,
 // responses and router
-package validation
+package server
 
 import (
 	"database/sql"
@@ -14,9 +14,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/derkajecht/Beatrice/internal/server/config"
-	"github.com/derkajecht/Beatrice/internal/shared/types"
-	"github.com/derkajecht/Beatrice/internal/shared/utils"
+	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
 func UsernameSanitizer(username string) string {
@@ -76,7 +74,7 @@ func IsValidLocation(location string) (bool, error) {
 // Pingdb checks if the database is accessible
 // uses the location and name from the config struct. No need to pass it in.
 func Pingdb() (*sql.DB, error) {
-	cfg := config.NewDatabaseInfo()
+	cfg := NewDatabaseInfo()
 	// enable foreign key constraints
 	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
 	// open the database connection
@@ -101,7 +99,7 @@ func UnmarshalPacket(conn net.Conn, buf []byte, n int, env any) error {
 		slog.Error("Error unmarshalling envelope:", "err", err, "client", conn.RemoteAddr())
 
 		// Send error packet to client
-		utils.SendPacketToClient(conn, "e", &types.ErrPacket{
+		shared.SendPacketToClient(conn, "e", &shared.ErrPacket{
 			Message: "invalid_protocol_format",
 		})
 

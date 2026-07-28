@@ -1,6 +1,6 @@
 // Package validation contains utility functions for the project such as validation, listener,
 // responses and router
-package sharedvalidation
+package shared
 
 import (
 	"slices"

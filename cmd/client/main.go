@@ -4,7 +4,7 @@ import (
 	"flag"
 	"sync"
 
-	"github.com/derkajecht/Beatrice/internal/client/websocket"
+	"github.com/derkajecht/Beatrice/internal/client"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	wg := new(sync.WaitGroup)
 	wg.Add(1) // add a wait group to ensure the server is closed after the main function is done
 	wg.Go(func() {
-		websocket.StartClient(*host, *port)
+		client.StartClient(*host, *port)
 	})
 	wg.Wait() // wait for the server to close
 

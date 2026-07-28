@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 
-	"github.com/derkajecht/Beatrice/internal/server/websocket"
+	"github.com/derkajecht/Beatrice/internal/server"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 	flag.Parse()
 
 	// run the server - starts the websocket server, starts the hub and listens for incoming connections
-	websocket.StartServer(*host, *port, *dbName, *dbLocation)
+	server.StartServer(*host, *port, *dbName, *dbLocation)
 
 	// example usage:
 	// go run main.go -host localhost -port 8080 -contype tcp -db beatrice.db -dbloc ./beatrice

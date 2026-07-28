@@ -1,15 +1,15 @@
-package models
+package server
 
 import (
-	"github.com/derkajecht/Beatrice/internal/shared/types"
+	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
 // NewClientPacket creates a new client packet struct with the given nickname and public key
-func NewClientPacket(nickname string, pubKey []byte) *types.User {
-	return &types.User{
+func NewClientPacket(nickname string, pubKey []byte) *shared.User {
+	return &shared.User{
 		Nickname: nickname,
-		Crypto: types.CryptoPacket{
-			PubKey: types.PubKey{
+		Crypto: shared.CryptoPacket{
+			PubKey: shared.PubKey{
 				PubKey: pubKey,
 			},
 		},
@@ -17,22 +17,22 @@ func NewClientPacket(nickname string, pubKey []byte) *types.User {
 }
 
 // NewErrPacket creates a new error packet struct with the given error message
-func NewErrPacket(errMsg string) *types.ErrPacket {
-	return &types.ErrPacket{
+func NewErrPacket(errMsg string) *shared.ErrPacket {
+	return &shared.ErrPacket{
 		Message: errMsg,
 	}
 }
 
 // NewDirPacket creates a new dir packet struct with the given user list
-func NewDirPacket(GetUserList map[string][]byte) *types.DirPacket {
-	return &types.DirPacket{
+func NewDirPacket(GetUserList map[string][]byte) *shared.DirPacket {
+	return &shared.DirPacket{
 		CurrentUsers: GetUserList,
 	}
 }
 
 // GetUserList returns a list of nicknames and their public keys for all connected users
 // except the given nickname
-func GetUserList(r *types.Room, nickname string) map[string][]byte {
+func GetUserList(r *shared.Room, nickname string) map[string][]byte {
 	r.Lock()
 	defer r.Unlock()
 

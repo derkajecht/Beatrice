@@ -1,4 +1,4 @@
-package websocket
+package server
 
 import (
 	"context"
@@ -9,30 +9,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/derkajecht/Beatrice/internal/server/router"
 	"github.com/derkajecht/Beatrice/internal/server/storage"
 	"github.com/derkajecht/Beatrice/internal/shared/sharedvalidation"
 	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
-
-type Hub struct {
-	clients      map[*websocket.Conn]*connection.Client
-	register     chan *websocket.Conn
-	broadcast    chan []byte
-	dm           chan []byte
-	handshake    chan *websocket.Conn
-	deleteClient chan *websocket.Conn
-}
-
-func NewHub() *Hub {
-	return &Hub{
-		clients:      make(map[*websocket.Conn]*websocket.Client),
-		broadcast:    make(chan []byte),
-		dm:           make(chan []byte),
-		handshake:    make(chan *websocket.Conn),
-		deleteClient: make(chan *websocket.Conn),
-	}
-}
 
 func ServerStruct(dbLocation string) *types.Server {
 	return &types.Server{
@@ -64,19 +44,19 @@ func (h *Hub) Listener(ctx context.Context) {
 			// call handshake function
 			switch client.Type {
 			case "handshake":
-				router.HandleHandshake(client, h.clients[client])
+				HandleHandshake(client, h.clients[client])
 			case "challenge":
-				router.HandleChallenge(client, h.clients[client])
+				HandleChallenge(client, h.clients[client])
 			case "message":
-				router.HandleMessage(client, h.clients[client])
+				HandleMessage(client, h.clients[client])
 			case "join":
-				router.HandleJoin(client, h.clients[client])
+				HandleJoin(client, h.clients[client])
 			case "leave":
-				router.HandleLeave(client, h.clients[client])
+				HandleLeave(client, h.clients[client])
 			case "error":
-				router.HandleError(client, h.clients[client])
+				HandleError(client, h.clients[client])
 			case "dir":
-				router.HandleDir(client, h.clients[client])
+				HandleDir(client, h.clients[client])
 			}
 		}
 	}

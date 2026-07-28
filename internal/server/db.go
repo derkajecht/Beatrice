@@ -1,4 +1,4 @@
-package storage
+package server
 
 import (
 	"database/sql"
@@ -8,10 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/derkajecht/Beatrice/internal/server/config"
-	"github.com/derkajecht/Beatrice/internal/server/validation"
-	"github.com/derkajecht/Beatrice/internal/shared/sharedvalidation"
-	"github.com/derkajecht/Beatrice/internal/shared/types"
+	"github.com/derkajecht/Beatrice/internal/shared"
 	_ "modernc.org/sqlite"
 )
 
@@ -21,17 +18,17 @@ import (
 func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 
 	// create NewDatabaseInfo struct
-	cfg := config.NewDatabaseInfo()
+	cfg := NewDatabaseInfo()
 
 	// loop through the inputs and assign the default values to the cfg struct if empty
-	if sharedvalidation.HasEmptyArgs(dbName, dbLocation) {
+	if shared.HasEmptyArgs(dbName, dbLocation) {
 		slog.Warn("No database name or location provided: Defaulting to beatrice.db and ./beatrice")
 		return nil, "", fmt.Errorf("no database name or location provided")
 	}
 
 	// validate the database location
 	// if the location is not valid, log a warning and use the default location
-	if valid, err := validation.IsValidLocation(dbLocation); !valid {
+	if valid, err := IsValidLocation(dbLocation); !valid {
 		slog.Error("Invalid database location:", "err", err)
 		cfg.Location = "./beatrice"
 	}
@@ -49,7 +46,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	}
 
 	// open the database connection
-	db, err := validation.Pingdb()
+	db, err := Pingdb()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to attach database: %w", err)
 	}
@@ -87,8 +84,8 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 }
 
 // StoreUser adds a new user to the database - nickname and public key
-func StoreUser(u *types.User) error {
-	db, err := validation.Pingdb()
+func StoreUser(u *shared.User) error {
+	db, err := Pingdb()
 	if err != nil {
 		return fmt.Errorf("failed to attach database: %w", err)
 	}
