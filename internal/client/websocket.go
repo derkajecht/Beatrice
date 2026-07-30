@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/derkajecht/Beatrice/internal/client/tui"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
@@ -87,8 +86,8 @@ func StartClient(host, port string) {
 
 	// setup the logger and read-only channel for the TUI
 	// start the TUI in a goroutine - non-blocking
-	logCh := LoggerSetup()
-	go tui.NewTUI(logCh)
+	// logCh := LoggerSetup()
+	// go tui.NewTUI(logCh)
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session

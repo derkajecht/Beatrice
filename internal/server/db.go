@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/derkajecht/Beatrice/internal/client"
 	"github.com/derkajecht/Beatrice/internal/shared"
 	_ "modernc.org/sqlite"
 )
@@ -30,7 +31,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	// if the location is not valid, log a warning and use the default location
 	if valid, err := IsValidLocation(dbLocation); !valid {
 		slog.Error("Invalid database location:", "err", err)
-		cfg.Location = "./beatrice"
+		cfg.Location = "beatrice/"
 	}
 
 	// if the above validation is successful, assign the input values to the cfg struct
@@ -84,7 +85,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 }
 
 // StoreUser adds a new user to the database - nickname and public key
-func StoreUser(u *shared.User) error {
+func StoreUser(u *client.User) error {
 	db, err := Pingdb()
 	if err != nil {
 		return fmt.Errorf("failed to attach database: %w", err)

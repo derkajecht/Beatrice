@@ -30,34 +30,34 @@ func UsernameSanitizer(username string) string {
 
 // IsValidUsername returns true if the given string is not already taken
 // also checks username length and sanitizes the username
-func IsValidUsername(username string) bool {
-	// Sanitize the username first to remove any invalid characters
-	username = UsernameSanitizer(username)
-	if len(username) < 3 {
-		// Draw to TUI and re-prompt the user for a valid username
-		slog.Warn("Username is too short. Please try again.", "username", username)
-		return false // username is too short
-	}
-	// ping the db first
-	db, err := Pingdb()
-	if err != nil {
-		slog.Error("Error pinging database:", "err", err)
-		return false
-	}
-
-	// declare a variable to store the number of rows
-	var exists int
-	// check if the username exists in the database
-	err = db.QueryRow("SELECT id FROM users WHERE nickname = ?", username).Scan(&exists)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return true // username is available
-		}
-		// this could be caused by a race condition, so just log the error
-		slog.Error("Error checking if username is available:", "err", err, "username", username)
-	}
-	return false // username is already taken
-}
+// func IsValidUsername(username string) bool {
+// 	// Sanitize the username first to remove any invalid characters
+// 	username = UsernameSanitizer(username)
+// 	if len(username) < 3 {
+// 		// Draw to TUI and re-prompt the user for a valid username
+// 		slog.Warn("Username is too short. Please try again.", "username", username)
+// 		return false // username is too short
+// 	}
+// 	// ping the db first
+// 	db, err := Pingdb()
+// 	if err != nil {
+// 		slog.Error("Error pinging database:", "err", err)
+// 		return false
+// 	}
+//
+// 	// declare a variable to store the number of rows
+// 	var exists int
+// 	// check if the username exists in the database
+// 	err = db.QueryRow("SELECT id FROM users WHERE nickname = ?", username).Scan(&exists)
+// 	if err != nil {
+// 		if errors.Is(err, sql.ErrNoRows) {
+// 			return true // username is available
+// 		}
+// 		// this could be caused by a race condition, so just log the error
+// 		slog.Error("Error checking if username is available:", "err", err, "username", username)
+// 	}
+// 	return false // username is already taken
+// }
 
 // IsValidLocation returns true if the given string is a valid location
 // queries the file system to check if the location exists
@@ -76,7 +76,7 @@ func IsValidLocation(location string) (bool, error) {
 func Pingdb() (*sql.DB, error) {
 	cfg := NewDatabaseInfo()
 	// enable foreign key constraints
-	dsn := fmt.Sprintf("%s?_pragma=foreign_keys=(1)", cfg.Location)
+	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", cfg.Name)
 	// open the database connection
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

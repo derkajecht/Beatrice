@@ -9,7 +9,7 @@ import (
 )
 
 // HandleHandshake validates and creates client session
-func HandleHandshake(c *websocket.Conn, p shared.User) {}
+func HandleHandshake(c *websocket.Conn, p ServerClient) {}
 
 // HandleMessage handles incoming message packets - todo
 func HandleMessage(p shared.MessagePacket, conn net.Conn) {

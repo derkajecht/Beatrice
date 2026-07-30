@@ -28,6 +28,6 @@ func NewConnectionInfo() ConnectionInfo {
 func NewDatabaseInfo() DatabaseInfo {
 	return DatabaseInfo{
 		Name:     "beatrice.db",
-		Location: "./beatrice",
+		Location: "beatrice/",
 	}
 }

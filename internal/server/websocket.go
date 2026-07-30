@@ -9,13 +9,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/derkajecht/Beatrice/internal/server/storage"
-	"github.com/derkajecht/Beatrice/internal/shared/sharedvalidation"
-	"github.com/derkajecht/Beatrice/internal/shared/types"
+	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
-func ServerStruct(dbLocation string) *types.Server {
-	return &types.Server{
+func ServerStruct(dbLocation string) *Server {
+	return &Server{
 		ActiveConnections:  make(map[string]map[string]string),
 		PendingConnections: make(map[string]string),
 		DatabasePath:       dbLocation,
@@ -30,7 +28,7 @@ func (h *Hub) Listener(ctx context.Context) {
 
 		case client := <-h.register:
 			// add client to the map
-			h.clients[client] = &types.Client{}
+			h.clients[client] = &ServerClient{}
 
 		case client, ok := <-h.deleteClient:
 			if !ok {
@@ -40,24 +38,24 @@ func (h *Hub) Listener(ctx context.Context) {
 			delete(h.clients, client)
 			client.CloseNow()
 
-		case client := <-h.handshake:
-			// call handshake function
-			switch client.Type {
-			case "handshake":
-				HandleHandshake(client, h.clients[client])
-			case "challenge":
-				HandleChallenge(client, h.clients[client])
-			case "message":
-				HandleMessage(client, h.clients[client])
-			case "join":
-				HandleJoin(client, h.clients[client])
-			case "leave":
-				HandleLeave(client, h.clients[client])
-			case "error":
-				HandleError(client, h.clients[client])
-			case "dir":
-				HandleDir(client, h.clients[client])
-			}
+			// case client := <-h.handshake:
+			// 	// call handshake function
+			// 	switch client.Type {
+			// 	case "handshake":
+			// 		HandleHandshake(client, h.clients[client])
+			// 	case "challenge":
+			// 		HandleChallenge(client, h.clients[client])
+			// 	case "message":
+			// 		HandleMessage(client, h.clients[client])
+			// 	case "join":
+			// 		HandleJoin(client, h.clients[client])
+			// 	case "leave":
+			// 		HandleLeave(client, h.clients[client])
+			// 	case "error":
+			// 		HandleError(client, h.clients[client])
+			// 	case "dir":
+			// 		HandleDir(client, h.clients[client])
+			// 	}
 		}
 	}
 }
@@ -104,11 +102,11 @@ func (h *Hub) wsHandler(w http.ResponseWriter, r *http.Request) {
 func StartServer(host, port, dbName, dbLocation string) {
 
 	// check for empty args and log a warning if they are
-	if sharedvalidation.HasEmptyArgs(host, port, dbName, dbLocation) {
+	if shared.HasEmptyArgs(host, port, dbName, dbLocation) {
 		slog.Warn("No host, port, db name or db location provided: Defaulting to localhost:8080, beatrice.db, and ./beatrice")
 	}
 
-	db, dbLocation, err := storage.NewDatabase(dbName, dbLocation)
+	db, dbLocation, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
@@ -120,7 +118,7 @@ func StartServer(host, port, dbName, dbLocation string) {
 
 	// register websocket
 	addr := fmt.Sprintf("%s:%s", host, port)
-	http.HandleFunc("/ws", wsHandler) // todo: change to hub.wsHandler
+	http.HandleFunc("/ws", NewHub().wsHandler) // NOTE: not sure if correct to call NewHub().wshandler
 	slog.Info("Starting server", "addr", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		slog.Error("Error starting server", "err", err)

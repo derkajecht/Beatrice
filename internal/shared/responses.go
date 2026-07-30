@@ -5,8 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-
-	"github.com/derkajecht/Beatrice/internal/shared/types"
 )
 
 // TODO: Could rename SendStatus to capture both success and error packets
@@ -23,7 +21,7 @@ func SendPacketToClient(conn net.Conn, packetType string, innerPacket any) error
 	}
 
 	// create envelope struct and wrap inner packet in it
-	envelope := types.GeneralPacket{
+	envelope := GeneralPacket{
 		Type:    packetType,
 		Message: innerBytes,
 	}
@@ -54,7 +52,7 @@ func SendPacketToClient(conn net.Conn, packetType string, innerPacket any) error
 
 // DisconnectAndQuit closes the connection and quits the application
 func DisconnectAndQuit(conn net.Conn) {
-	SendPacketToClient(conn, "q", &types.ErrPacket{
+	SendPacketToClient(conn, "q", &ErrPacket{
 		Message: "err_connection_closed",
 	})
 	conn.Close()

@@ -23,7 +23,7 @@ type ServerClient struct {
 }
 
 type Hub struct {
-	clients      map[*websocket.Conn]*websocket.Client
+	clients      map[*websocket.Conn]*ServerClient
 	register     chan *websocket.Conn
 	broadcast    chan []byte
 	dm           chan []byte
@@ -33,7 +33,7 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:      make(map[*websocket.Conn]*websocket.Client),
+		clients:      make(map[*websocket.Conn]*ServerClient),
 		broadcast:    make(chan []byte),
 		dm:           make(chan []byte),
 		handshake:    make(chan *websocket.Conn),

@@ -1,0 +1,8 @@
+bugs:
+  - bug_id: BUG-2026-07-30T232123
+    date: 2026-07-30
+    severity: MEDIUM
+    priority: HIGH
+    scope: database initialization
+    summary: SQLite database filename is created as directory and connection opens wrong path
+    file: specs/bugs/BUG-2026-07-30T232123-sqlite-path-is-directory.md
