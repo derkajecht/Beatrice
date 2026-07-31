@@ -38,6 +38,7 @@ func (h *Hub) Listener(ctx context.Context) {
 			delete(h.clients, client)
 			client.CloseNow()
 
+			// TODO: implement the handling of the receieved packets
 			// case client := <-h.handshake:
 			// 	// call handshake function
 			// 	switch client.Type {
@@ -68,10 +69,7 @@ func (h *Hub) wsHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Error accepting websocket connection", "err", err)
 		return
 	}
-
-	// start listener goroutine to handle incoming packets accordingly
-	ctx := conn.CloseRead(r.Context())
-	go h.Listener(ctx)
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	// send conn to the hub for handshake etc
 	h.register <- conn
@@ -80,6 +78,9 @@ func (h *Hub) wsHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		h.deleteClient <- conn
 	}()
+
+	// start listener goroutine to handle incoming packets accordingly
+	ctx := r.Context()
 
 	// blocks until a message is received
 	for {
@@ -105,6 +106,10 @@ func StartServer(host, port, dbName, dbLocation string) {
 	if shared.HasEmptyArgs(host, port, dbName, dbLocation) {
 		slog.Warn("No host, port, db name or db location provided: Defaulting to localhost:8080, beatrice.db, and ./beatrice")
 	}
+	host = "localhost"
+	port = "8080"
+	dbName = "beatrice.db"
+	dbLocation = "./beatrice"
 
 	db, dbLocation, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
@@ -116,9 +121,11 @@ func StartServer(host, port, dbName, dbLocation string) {
 	// log that the database connection was established
 	slog.Info("Database connection established")
 
+	hub := NewHub()
+
 	// register websocket
 	addr := fmt.Sprintf("%s:%s", host, port)
-	http.HandleFunc("/ws", NewHub().wsHandler) // NOTE: not sure if correct to call NewHub().wshandler
+	http.HandleFunc("/ws", hub.wsHandler) // NOTE: not sure if correct to call NewHub().wshandler
 	slog.Info("Starting server", "addr", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		slog.Error("Error starting server", "err", err)

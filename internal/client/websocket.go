@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/derkajecht/Beatrice/internal/client/tui"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
@@ -27,7 +28,8 @@ func NewChatClient(ctx context.Context, addr string) (User, error) {
 			select {
 			case <-time.After(wait):
 			case <-ctx.Done():
-				return User{}, ctx.Err()
+				// return User{}, ctx.Err()
+				continue
 			}
 			delay = min(delay*2, maxDelay)
 			continue
@@ -86,8 +88,8 @@ func StartClient(host, port string) {
 
 	// setup the logger and read-only channel for the TUI
 	// start the TUI in a goroutine - non-blocking
-	// logCh := LoggerSetup()
-	// go tui.NewTUI(logCh)
+	logCh := LoggerSetup()
+	go tui.NewTUI(logCh)
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
@@ -98,7 +100,7 @@ func StartClient(host, port string) {
 	}
 
 	// format the address string
-	addr := fmt.Sprintf("%s:%s", host, port)
+	addr := fmt.Sprintf("ws://%s:%s", host, port)
 
 	// create a new context with a timeout of 30 seconds
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -114,6 +116,4 @@ func StartClient(host, port string) {
 	// 1000 is the close code for normal closure
 	defer chatClient.Conn.Close(1000, "Goodbye")
 	slog.Info("Closing connection", "connected", false) // slog message to inform the tui that connection is closed
-
-	// TODO: call to start the tui
 }
