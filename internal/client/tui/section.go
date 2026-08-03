@@ -26,6 +26,7 @@ type Section interface {
 	Init() tea.Cmd
 	Update(msg tea.Msg) (Section, tea.Cmd)
 	View(width, height int, focused bool) string
+	Chosen() string
 }
 
 type SectionFactory func(ChatSectionConfig) Section

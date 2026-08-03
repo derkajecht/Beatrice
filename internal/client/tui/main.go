@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -16,19 +17,24 @@ type keyMap struct {
 }
 
 var keys = keyMap{
-	Quit:   key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
-	Next:   key.NewBinding(key.WithKeys("ctrl+l", "tab", "right"), key.WithHelp("ctrl+l", "next section")),
-	Prev:   key.NewBinding(key.WithKeys("ctrl+h", "shift+tab", "left"), key.WithHelp("ctrl+h", "prev section")),
-	Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+	Quit: key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
+	Next: key.NewBinding(key.WithKeys("ctrl+l", "tab", "right"), key.WithHelp("ctrl+l", "next section")),
+	Prev: key.NewBinding(key.WithKeys("ctrl+h", "shift+tab", "left"), key.WithHelp("ctrl+h", "prev section")),
+	// Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 }
 
 type model struct {
-	logCh   <-chan []byte
-	width   int
-	height  int
-	sidebar Section
-	chat    Section
-	header  Section
+	logCh    <-chan []byte
+	width    int
+	height   int
+	sections []Section
+	focused  int
+	chosen   string
+	tooSmall bool
+	viewport viewport.Model
+	sidebar  Section
+	chat     Section
+	header   Section
 }
 
 type logMsg string
@@ -38,49 +44,88 @@ func NewTUI(logCh <-chan []byte) {
 }
 
 func newModel(logCh <-chan []byte) model {
+	// TODO: read user defined config and set main chat width/height
+	sections := BuildSections(ChatConfig{})
+
 	return model{
-		logCh:   logCh,
-		sidebar: newSidebarModel(SidebarConfig{}),
-		chat:    newChatModel(ChatViewConfig{}),
-		header:  newHeaderModel(HeaderConfig{}),
+		logCh:    logCh,
+		sections: sections,
+		sidebar:  newSidebarModel(SidebarConfig{}),
+		chat:     newChatModel(ChatViewConfig{}),
+		header:   newHeaderModel(HeaderConfig{}),
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return waitForLog(m.logCh)
+	// call log channel init and init all sections
+	waitForLog(m.logCh)
+	cmds := make([]tea.Cmd, len(m.sections))
+	for i, s := range m.sections {
+		cmds[i] = s.Init()
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// var cmd tea.Cmd
+
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
+	// TODO: refine the key check, quite bad atm
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+		m.viewport.SetWidth(msg.Width)
+		m.viewport.SetHeight(msg.Height)
+		// m.width, m.height = msg.Width, msg.Height
+		m.viewport.GotoBottom()
+		return m, nil
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, keys.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, keys.Next):
+			if len(m.sections) > 0 {
+				m.focused = (m.focused + 1) % len(m.sections)
+			}
+		case key.Matches(msg, keys.Prev):
+			if len(m.sections) > 0 {
+				m.focused--
+				if m.focused < 0 {
+					m.focused = len(m.sections) - 1
+				}
+			}
+			// case key.Matches(msg, keys.Select):
+			// 	if len(m.sections) > 0 {
+			// 		m.sections[m.focused], _ = m.sections[m.focused].Update(msg)
+			// 		if chosen := m.sections[m.focused].Chosen(); chosen != "" {
+			// 			m.chosen = chosen
+			// 			return m, tea.Quit
+			// 		}
+			// 	}
+		}
 	case logMsg:
+		// NOTE: re-enable this after building the tui
 		updated, _ := m.chat.Update(msg)
 		m.chat = updated
 		return m, waitForLog(m.logCh)
+
 	}
 	return m, nil
 }
 
 func (m model) View() string {
-	if m.width == 0 {
-		return "Loading..."
-	}
+	// if m.viewport.Width() == 0 {
+	// 	return "Loading..."
+	// }
 
-	sidebarWidth := min(24, m.width/3)
-	bodyWidth := m.width - sidebarWidth
-	bodyHeight := max(1, m.height-4)
+	sidebarWidth := m.viewport.Width() / 5
+	bodyWidth := m.viewport.Width() - sidebarWidth - 2
+	bodyHeight := max(1, m.viewport.Height()-4)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
 		m.sidebar.View(sidebarWidth, bodyHeight, false),
 		m.chat.View(bodyWidth, bodyHeight, true),
 	)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.header.View(m.width, 1, true),
+		m.header.View(m.viewport.Width(), 1, true),
 		body,
 	)
 }

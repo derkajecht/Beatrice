@@ -36,11 +36,11 @@ func (m ChatViewConfig) View(width, height int, focused bool) string {
 		Width(width).
 		Height(height).
 		Padding(1).
+		Border(lipgloss.RoundedBorder()).
 		Render(content)
 }
 
 func (m ChatViewConfig) Name() string    { return "chat" }
-func (m ChatViewConfig) Chosen() bool    { return true }
+func (m ChatViewConfig) Chosen() string  { return "" }
 func (m ChatViewConfig) TotalItems() int { return len(m.Messages) }
 func (m ChatViewConfig) Width() float64  { return 1 }
-
