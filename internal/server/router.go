@@ -4,12 +4,15 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/coder/websocket"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
-// HandleHandshake validates and creates client session
-func HandleHandshake(c *websocket.Conn, p ServerClient) {}
+// HandleHandshake receives the handshake packet from the client
+// validates username and public key, and saves the client to the hub
+// returns an error if the handshake fails
+func HandleHandshake(p shared.GeneralPacket) error {
+	return nil
+}
 
 // HandleMessage handles incoming message packets - todo
 func HandleMessage(p shared.MessagePacket, conn net.Conn) {

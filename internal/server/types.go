@@ -1,6 +1,8 @@
 package server
 
 import (
+	"sync"
+
 	"github.com/coder/websocket"
 )
 
@@ -8,35 +10,30 @@ import (
 // Server Memory Tracking Models
 // -------------------------------------------------------------------
 
-type Server struct {
-	ActiveConnections  map[string]map[string]string `json:"ac"`  // map of current active users - "jordan": {"conn": 1234, "pk": "-----BEGIN PUBLIC KEY..."}
-	PendingConnections map[string]string            `json:"pc"`  // once handshake is confirmed, this will store "jordan": "-----BEGIN PUBLIC KEY..." and then be passed to connection method
-	DatabasePath       string                       `json:"dbp"` // path to the database, stored in memory
-}
-
 // Client represents a fully authenticated server-side active connection tracking state
 type ServerClient struct {
+	ID       string
 	Conn     *websocket.Conn
 	Nickname string
 	PubKey   []byte
 	TuiChan  chan []byte
 }
 
+// Hub represents the server-side hub for managing connections and data
 type Hub struct {
-	clients      map[*websocket.Conn]*ServerClient
-	register     chan *websocket.Conn
-	broadcast    chan []byte
-	dm           chan []byte
-	handshake    chan *websocket.Conn
-	deleteClient chan *websocket.Conn
+	mu              sync.RWMutex
+	clients         map[string]*ServerClient
+	addClientChn    chan *ServerClient
+	broadcastChn    chan []byte
+	removeClientChn chan *ServerClient
+	DatabasePath    string
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:      make(map[*websocket.Conn]*ServerClient),
-		broadcast:    make(chan []byte),
-		dm:           make(chan []byte),
-		handshake:    make(chan *websocket.Conn),
-		deleteClient: make(chan *websocket.Conn),
+		clients:         make(map[string]*ServerClient),
+		addClientChn:    make(chan *ServerClient),
+		removeClientChn: make(chan *ServerClient),
+		broadcastChn:    make(chan []byte),
 	}
 }

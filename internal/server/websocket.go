@@ -2,50 +2,73 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
-func ServerStruct(dbLocation string) *Server {
-	return &Server{
-		ActiveConnections:  make(map[string]map[string]string),
-		PendingConnections: make(map[string]string),
-		DatabasePath:       dbLocation,
+func HubInit(dbLocation string) *Hub {
+	return &Hub{
+		DatabasePath: dbLocation,
 	}
 }
 
-func (h *Hub) Listener(ctx context.Context) {
+// addClient adds a client to the hub clients map
+func (h *Hub) addClient(c *ServerClient) {
+	h.clients[c.ID] = c
+}
+
+// removeClient removes a client from the hub clients map
+func (h *Hub) removeClient(c string) {
+	delete(h.clients, c)
+}
+
+// Listener is the main listener for the hub
+func (h *Hub) Listener(ctx context.Context, c *ServerClient) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-
-		case client := <-h.register:
+		case client := <-h.addClientChn:
 			// add client to the map
-			h.clients[client] = &ServerClient{}
+			h.addClient(client)
+		case client := <-h.removeClientChn:
+			h.removeClient(client.ID)
 
-		case client, ok := <-h.deleteClient:
-			if !ok {
-				// channel was/is closed
-				return
+		// TODO: implement the handling of the receieved packets
+		case msg := <-h.broadcastChn:
+			// unmarshal the message to json
+			var packet shared.GeneralPacket
+			err := json.Unmarshal(msg, &packet)
+			if err != nil {
+				slog.Error("Error unmarshalling message packet", "err", err)
+				break
 			}
-			delete(h.clients, client)
-			client.CloseNow()
+			slog.Info("packet successfully unmarshalled", "packet", packet)
 
-			// TODO: implement the handling of the receieved packets
-			// case client := <-h.handshake:
-			// 	// call handshake function
-			// 	switch client.Type {
-			// 	case "handshake":
-			// 		HandleHandshake(client, h.clients[client])
-			// 	case "challenge":
-			// 		HandleChallenge(client, h.clients[client])
+			// call handshake function
+			switch packet.Type {
+			case "h": // handshake
+				// TODO: finish writing the handshake function
+				if err := HandleHandshake(packet); err != nil {
+					slog.Error("error handling handshake", "err", err)
+					// send failure packet back to client to trigger tui event
+					err := h.SendPacketToClient(c, "err", &shared.ErrPacket{
+						Message: "err_handshake_failed",
+					})
+					if err != nil {
+						slog.Error("error sending handshake failure packet", "err", err)
+					}
+				}
+
+			// case "challenge":
+			// 	HandleChallenge(client, h.clients[client])
 			// 	case "message":
 			// 		HandleMessage(client, h.clients[client])
 			// 	case "join":
@@ -54,46 +77,35 @@ func (h *Hub) Listener(ctx context.Context) {
 			// 		HandleLeave(client, h.clients[client])
 			// 	case "error":
 			// 		HandleError(client, h.clients[client])
-			// 	case "dir":
-			// 		HandleDir(client, h.clients[client])
-			// 	}
+			default:
+				slog.Error("unknown packet type", "packet", packet)
+			}
 		}
 	}
 }
 
 // wsHandler handles incoming websocket connections
 // it distributes the connection to the appropriate channels
-func (h *Hub) wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		slog.Error("Error accepting websocket connection", "err", err)
-		return
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-
-	// send conn to the hub for handshake etc
-	h.register <- conn
-
-	// defer closing the connection
+func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
+	// close the connection when the TUI exits
 	defer func() {
-		h.deleteClient <- conn
+		h.removeClientChn <- c
+		c.Conn.Close(websocket.StatusNormalClosure, "")
 	}()
-
-	// start listener goroutine to handle incoming packets accordingly
-	ctx := r.Context()
-
-	// blocks until a message is received
+	// register the client in the hub
+	h.addClientChn <- c
+	// start the listener
+	go h.Listener(ctx, c)
+	// start the broadcast loop
+	// sends all messages received from the client to the hub via the broadcast channel
 	for {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		_, msg, err := conn.Read(ctx)
-		cancel()
+		var m []byte
+		err := wsjson.Read(ctx, c.Conn, &m)
 		if err != nil {
-			slog.Error("Error reading from websocket connection", "err", err)
+			slog.Error("error in Receive Message: ", err.Error())
 			break
 		}
-
-		// send msg to the hub
-		h.broadcast <- msg
+		h.broadcastChn <- m
 	}
 }
 
@@ -105,11 +117,11 @@ func StartServer(host, port, dbName, dbLocation string) {
 	// check for empty args and log a warning if they are
 	if shared.HasEmptyArgs(host, port, dbName, dbLocation) {
 		slog.Warn("No host, port, db name or db location provided: Defaulting to localhost:8080, beatrice.db, and ./beatrice")
+		host = "localhost"
+		port = "8080"
+		dbName = "beatrice.db"
+		dbLocation = "./beatrice"
 	}
-	host = "localhost"
-	port = "8080"
-	dbName = "beatrice.db"
-	dbLocation = "./beatrice"
 
 	db, dbLocation, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
@@ -117,17 +129,38 @@ func StartServer(host, port, dbName, dbLocation string) {
 	}
 	defer db.Close()
 	// store the database path in the server struct
-	ServerStruct(dbLocation)
+	HubInit(dbLocation)
 	// log that the database connection was established
 	slog.Info("Database connection established")
 
+	// register websocket and hub
 	hub := NewHub()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			slog.Error("Error accepting websocket connection", "err", err)
+			return
+		}
+		remoteAddr := r.RemoteAddr
+		client := &ServerClient{
+			ID:      remoteAddr,
+			Conn:    conn,
+			PubKey:  []byte{},
+			TuiChan: make(chan []byte),
+		}
+		hub.addClient(client)
+		defer hub.removeClient(client)
 
-	// register websocket
+		wsHandler(r.Context(), client, hub)
+	})
+
 	addr := fmt.Sprintf("%s:%s", host, port)
-	http.HandleFunc("/ws", hub.wsHandler) // NOTE: not sure if correct to call NewHub().wshandler
-	slog.Info("Starting server", "addr", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	server := http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		slog.Error("Error starting server", "err", err)
 	}
 }
