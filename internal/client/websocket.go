@@ -81,7 +81,7 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 	}
 
 	// marshal envelope struct to JSON
-	if err := wsjson.Write(ctx, u.Conn, envelope); err != nil {
+	if err := wsjson.Write(writeCtx, u.Conn, envelope); err != nil {
 		slog.Error("err_marshalling_envelope", "err", err)
 		return err
 	}
@@ -103,7 +103,7 @@ func StartClient(host, port string) error {
 	_, _, err := NewUserSession()
 	if err != nil {
 		slog.Error("Error generating user session", "err", err)
-		return
+		return err
 	}
 
 	// format the address string
@@ -127,4 +127,5 @@ func StartClient(host, port string) error {
 	// 1000 is the close code for normal closure
 	defer user.Conn.Close(websocket.StatusNormalClosure, "")
 	slog.Info("Closing connection", "connected", false) // slog message to inform the tui that connection is closed
+	return nil
 }
