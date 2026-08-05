@@ -40,7 +40,6 @@ func NewUserSession() (shared.PubKey, CryptoPacket, error) {
 	pubBytes := privKey.PublicKey().Bytes()
 	privBytes, err := privKey.Bytes()
 	if err != nil {
-		// NOTE: should i be returning this or just logging it?
 		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("failed to serialize private key: %w", err)
 	}
 

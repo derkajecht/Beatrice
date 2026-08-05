@@ -38,6 +38,7 @@ func (h *Hub) Listener(ctx context.Context) {
 			delete(h.clients, client)
 			client.CloseNow()
 
+			// TODO: implement the packet handler switch
 			// case client := <-h.handshake:
 			// 	// call handshake function
 			// 	switch client.Type {
