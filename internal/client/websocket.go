@@ -2,92 +2,101 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
 // NewChatClient establishes a connection to the server using the host and port provided.
-func NewChatClient(ctx context.Context, addr string) (User, error) {
-
-	// Open client connection to the server using the host and port provided
-	maxDelay := 10 * time.Second
-	delay := time.Second
+func (u *User) NewChatClient(ctx context.Context, addr string) error {
 
 	for {
 		conn, _, err := websocket.Dial(ctx, addr, nil)
 		if err != nil {
-			jitter := time.Duration(rand.Int63n(int64(delay / 2)))
-			wait := delay + jitter
-			slog.Error("Error connecting to server, retrying in %v", "err", err, "wait", wait)
-			select {
-			case <-time.After(wait):
-			case <-ctx.Done():
-				return User{}, ctx.Err()
-			}
-			delay = min(delay*2, maxDelay)
-			continue
+			slog.Error("Error connecting to server", "err", err)
+			return err
 		}
-		delay = time.Second
 
 		// create a new client instance, pass the connection and a channel for tui messages
-		client := User{
-			Conn:    conn,
-			TuiChan: make(chan []byte, 100),
-		}
+		u.Conn = conn
+		defer u.Conn.Close(websocket.StatusInternalError, "Client closed")
 
 		// run readloop in a goroutine for async reading
-		if err := client.readLoop(ctx); err != nil {
+		if err := u.readLoop(ctx); err != nil {
 			slog.Error("Error reading from websocket connection", "err", err)
-			return User{}, err
+			return err
 		}
-
-		// NOTE: not sure if this is needed
-		defer client.Conn.Close(websocket.StatusInternalError, "Client closed")
-		return client, nil
 	}
 }
 
-func (u User) readLoop(ctx context.Context) error {
+func (u *User) readLoop(ctx context.Context) error {
 	defer u.Conn.CloseNow()
 
 	for {
-		_, msg, err := u.Conn.Read(ctx)
+		_, msg, err := u.Conn.Read(ctx) // msg is []byte
 		if err != nil {
 			slog.Error("Error reading from websocket connection", "err", err)
 			return fmt.Errorf("error reading from websocket connection: %w", err)
 		}
 
-		// send msg to the hub
-		u.TuiChan <- msg
+		// unmarshal the message to json
+		var packet shared.GeneralPacket
+		err = json.Unmarshal(msg, &packet)
+		if err != nil {
+			slog.Error("Error unmarshalling message packet", "err", err)
+			break
+		}
+		slog.Info("packet successfully unmarshalled", "packet", packet)
+
+		// send msg packet to the hub
+		u.TuiChan <- packet
 	}
+	return nil
 }
 
-// SendMessage sends a message to the server when the user presses enter in the TUI
-func (u User) SendMessage(ctx context.Context, msg []byte) error {
+// SendPacketToClient sends a packet or message to the client
+// and returns an error if any
+func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
+
+	ctx := context.Background()
 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return u.Conn.Write(writeCtx, websocket.MessageText, msg)
+
+	// marshal inner packet to JSON
+	innerBytes, marshalErr := json.Marshal(innerPacket)
+	if marshalErr != nil {
+		slog.Error("err_marshalling_inner_packet", "err", marshalErr)
+		return marshalErr
+	}
+
+	// create envelope struct and wrap inner packet in it
+	envelope := shared.GeneralPacket{
+		Type:    packetType,
+		Message: innerBytes,
+	}
+
+	// marshal envelope struct to JSON
+	if err := wsjson.Write(ctx, u.Conn, envelope); err != nil {
+		slog.Error("err_marshalling_envelope", "err", err)
+		return err
+	}
+	return nil
 }
 
 // StartClient establishes a connection to the server using the host and port provided.
 // It returns an error if the host or port is empty.
-func StartClient(host, port string) {
+func StartClient(host, port string) error {
 
 	if shared.HasEmptyArgs(host, port) {
 		slog.Warn("No host or port provided: Defaulting to localhost:8080")
 		host = "localhost"
 		port = "8080"
 	}
-
-	// setup the logger and read-only channel for the TUI
-	// start the TUI in a goroutine - non-blocking
-	// logCh := LoggerSetup()
-	// go tui.NewTUI(logCh)
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
@@ -98,22 +107,24 @@ func StartClient(host, port string) {
 	}
 
 	// format the address string
-	addr := fmt.Sprintf("%s:%s", host, port)
+	addr := fmt.Sprintf("ws://%s:%s", host, port)
 
 	// create a new context with a timeout of 30 seconds
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	chatClient, err := NewChatClient(ctx, addr)
+	// create a new user instance
+	// initiates the conn and tuichan fields
+	user := NewUser()
+
+	err = user.NewChatClient(ctx, addr)
 	if err != nil {
 		slog.Error("Error connecting to server", "err", err)
-		return
+		return err
 	}
 	slog.Info("Connected to server", "connected", true, "addr", addr)
 	// close the connection when the TUI exits
 	// 1000 is the close code for normal closure
-	defer chatClient.Conn.Close(1000, "Goodbye")
+	defer user.Conn.Close(websocket.StatusNormalClosure, "")
 	slog.Info("Closing connection", "connected", false) // slog message to inform the tui that connection is closed
-
-	// TODO: call to start the tui
 }

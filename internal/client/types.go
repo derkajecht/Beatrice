@@ -4,6 +4,7 @@ import (
 	"crypto/hpke"
 
 	"github.com/coder/websocket"
+	"github.com/derkajecht/Beatrice/internal/shared"
 	"github.com/gammazero/deque"
 )
 
@@ -29,9 +30,16 @@ type CryptoPacket struct {
 
 // Stores major parts of the user's information
 type User struct {
-	Conn           *websocket.Conn   `json:"-"`
-	Nickname       string            `json:"n"`
-	Crypto         CryptoPacket      `json:"c"`
-	ConnectedUsers map[string][]byte `json:"cu"`
-	TuiChan        chan []byte
+	Conn           *websocket.Conn           `json:"-"`
+	Nickname       string                    `json:"n"`
+	Crypto         CryptoPacket              `json:"c"`
+	ConnectedUsers map[string][]byte         `json:"cu"`
+	TuiChan        chan shared.GeneralPacket `json:"-"`
+}
+
+func NewUser() *User {
+	return &User{
+		ConnectedUsers: make(map[string][]byte),
+		TuiChan:        make(chan shared.GeneralPacket, 100),
+	}
 }
