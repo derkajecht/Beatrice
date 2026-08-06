@@ -12,10 +12,15 @@ import (
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
+// maxDuration sets the maximum duration for a websocket read operation
+// approx 290 years. BOSH
+const maxDuration time.Duration = (1 << 63) - 1
+
 // NewChatClient establishes a connection to the server using the host and port provided.
 func (u *User) NewChatClient(ctx context.Context, addr string) error {
 
 	for {
+		// ctx passed in is 30 seconds - called from StartClient
 		conn, _, err := websocket.Dial(ctx, addr, nil)
 		if err != nil {
 			slog.Error("Error connecting to server", "err", err)
@@ -26,8 +31,11 @@ func (u *User) NewChatClient(ctx context.Context, addr string) error {
 		u.Conn = conn
 		defer u.Conn.Close(websocket.StatusInternalError, "Client closed")
 
+		// init new read context with a timeout of maxDuration (approx 290 years should be long enough lolcatz)
+		readCtx, cancel := context.WithTimeout(context.Background(), maxDuration)
+		defer cancel()
 		// run readloop in a goroutine for async reading
-		if err := u.readLoop(ctx); err != nil {
+		if err := u.readLoop(readCtx); err != nil {
 			slog.Error("Error reading from websocket connection", "err", err)
 			return err
 		}
@@ -64,7 +72,7 @@ func (u *User) readLoop(ctx context.Context) error {
 func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 
 	ctx := context.Background()
-	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// marshal inner packet to JSON
@@ -110,7 +118,7 @@ func StartClient(host, port string) error {
 	addr := fmt.Sprintf("ws://%s:%s", host, port)
 
 	// create a new context with a timeout of 30 seconds
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// create a new user instance

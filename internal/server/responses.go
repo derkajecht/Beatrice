@@ -6,25 +6,25 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/coder/websocket/wsjson"
+	"github.com/coder/websocket"
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
-
-// TODO: Could rename SendStatus to capture both success and error packets
 
 // SendPacketToClient sends a packet or message to the client
 // and returns an error if any
 func (h *Hub) SendPacketToClient(c *ServerClient, packetType string, innerPacket any) error {
 
 	ctx := context.Background()
-	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	remoteAddr := h.clients[c.ID]
+
+	// get the client from the hub
+	client := h.getClient(c.ID)
 
 	// marshal inner packet to JSON
 	innerBytes, marshalErr := json.Marshal(innerPacket)
 	if marshalErr != nil {
-		slog.Error("err_marshalling_inner_packet", "err", marshalErr, "client", remoteAddr)
+		slog.Error("err_marshalling_inner_packet", "err", marshalErr, "client", client)
 		return marshalErr
 	}
 
@@ -34,8 +34,14 @@ func (h *Hub) SendPacketToClient(c *ServerClient, packetType string, innerPacket
 		Message: innerBytes,
 	}
 
+	envelopeBytes, marshalErr := json.Marshal(envelope)
+	if marshalErr != nil {
+		slog.Error("err_marshalling_envelope", "err", marshalErr, "client", client)
+		return marshalErr
+	}
+
 	// marshal envelope struct to JSON
-	if err := wsjson.Write(ctx, c.Conn, envelope); err != nil {
+	if err := client.Conn.Write(writeCtx, websocket.MessageText, envelopeBytes); err != nil {
 		slog.Error("err_marshalling_envelope", "err", err)
 		return err
 	}

@@ -9,6 +9,7 @@ type ConnectionInfo struct {
 type DatabaseInfo struct {
 	Name     string
 	Location string
+	Dsn      string
 }
 
 // NewConnectionInfo returns a new ConnectionInfo struct with default values
@@ -25,9 +26,9 @@ func NewConnectionInfo() ConnectionInfo {
 // NewDatabaseInfo returns a new DatabaseInfo struct with default values
 // for the database name and location
 // these values can be overridden by the user inputted values through the cli
-func NewDatabaseInfo() DatabaseInfo {
+func NewDatabaseInfo(name, location string) DatabaseInfo {
 	return DatabaseInfo{
-		Name:     "beatrice.db",
-		Location: "beatrice/",
+		Name:     name,
+		Location: location,
 	}
 }

@@ -26,15 +26,15 @@ func HandleJoin(p shared.JoinPacket, conn net.Conn) {}
 func HandleLeave(p shared.LeavePacket, conn net.Conn) {}
 
 // HandleError processes error packets and disconnects client on protocol mismatch
-func HandleError(p shared.ErrPacket, conn net.Conn) {
-	slog.Debug("error packet received", "client", conn.RemoteAddr())
-	switch p.Message {
-	case "invalid_protocol_format":
-		slog.Error("Critical server/client mismatch")
-	default:
-		slog.Debug("non-critical error handled: ", p.Message)
-	}
-}
+// func HandleError(p shared.ErrPacket, conn net.Conn) {
+// 	slog.Debug("error packet received", "client", conn.RemoteAddr())
+// 	switch p.Message {
+// 	case "invalid_protocol_format":
+// 		slog.Error("Critical server/client mismatch")
+// 	default:
+// 		slog.Debug("non-critical error handled: ", p.Message)
+// 	}
+// }
 
 // HandleDir refreshes directory list - todo
 func HandleDir(p shared.DirPacket, conn net.Conn) {}

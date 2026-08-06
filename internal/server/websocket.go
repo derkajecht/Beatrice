@@ -21,11 +21,21 @@ func HubInit(dbLocation string) *Hub {
 
 // addClient adds a client to the hub clients map
 func (h *Hub) addClient(c *ServerClient) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.clients[c.ID] = c
+}
+
+func (h *Hub) getClient(id string) *ServerClient {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.clients[id]
 }
 
 // removeClient removes a client from the hub clients map
 func (h *Hub) removeClient(c string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	delete(h.clients, c)
 }
 
@@ -92,17 +102,17 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 		h.removeClientChn <- c
 		c.Conn.Close(websocket.StatusNormalClosure, "")
 	}()
+
 	// register the client in the hub
 	h.addClientChn <- c
-	// start the listener
-	go h.Listener(ctx, c)
+
 	// start the broadcast loop
 	// sends all messages received from the client to the hub via the broadcast channel
 	for {
 		var m []byte
 		err := wsjson.Read(ctx, c.Conn, &m)
 		if err != nil {
-			slog.Error("error in Receive Message: ", err.Error())
+			// slog.Error("error in Receive Message: ", err.Error())
 			break
 		}
 		h.broadcastChn <- m
@@ -120,7 +130,7 @@ func StartServer(host, port, dbName, dbLocation string) {
 		host = "localhost"
 		port = "8080"
 		dbName = "beatrice.db"
-		dbLocation = "./beatrice"
+		dbLocation = "~/beatrice"
 	}
 
 	db, dbLocation, err := NewDatabase(dbName, dbLocation)
@@ -149,10 +159,12 @@ func StartServer(host, port, dbName, dbLocation string) {
 			PubKey:  []byte{},
 			TuiChan: make(chan []byte),
 		}
-		hub.addClient(client)
-		defer hub.removeClient(client)
 
-		wsHandler(r.Context(), client, hub)
+		// get the context
+		ctx := r.Context()
+		// start the listener before wsHandler
+		go hub.Listener(ctx, client)
+		wsHandler(ctx, client, hub)
 	})
 
 	addr := fmt.Sprintf("%s:%s", host, port)

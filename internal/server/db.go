@@ -6,7 +6,6 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/derkajecht/Beatrice/internal/client"
 	"github.com/derkajecht/Beatrice/internal/shared"
@@ -19,7 +18,7 @@ import (
 func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 
 	// create NewDatabaseInfo struct
-	cfg := NewDatabaseInfo()
+	cfg := NewDatabaseInfo(dbName, dbLocation)
 
 	// loop through the inputs and assign the default values to the cfg struct if empty
 	if shared.HasEmptyArgs(dbName, dbLocation) {
@@ -29,15 +28,9 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 
 	// validate the database location
 	// if the location is not valid, log a warning and use the default location
-	if valid, err := IsValidLocation(dbLocation); !valid {
+	if valid, err := cfg.IsValidLocation(dbLocation); !valid {
 		slog.Error("Invalid database location:", "err", err)
-		cfg.Location = "beatrice/"
 	}
-
-	// if the above validation is successful, assign the input values to the cfg struct
-	// join the target directory and the database name to create the final path
-	cfg.Name = dbName
-	cfg.Location = filepath.Join(dbLocation, cfg.Name)
 
 	// create the target directory if it doesn't exist
 	// if it does exist, it will be ignored
@@ -47,10 +40,11 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	}
 
 	// open the database connection
-	db, err := Pingdb()
+	db, err := cfg.Pingdb()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to attach database: %w", err)
 	}
+	defer db.Close()
 
 	schema := `
 		CREATE TABLE IF NOT EXISTS users (
@@ -85,8 +79,8 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 }
 
 // StoreUser adds a new user to the database - nickname and public key
-func StoreUser(u *client.User) error {
-	db, err := Pingdb()
+func (cfg *DatabaseInfo) StoreUser(u *client.User) error {
+	db, err := cfg.Pingdb()
 	if err != nil {
 		return fmt.Errorf("failed to attach database: %w", err)
 	}

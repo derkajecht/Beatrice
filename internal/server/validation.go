@@ -4,17 +4,13 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
-	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
-
-	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
 func UsernameSanitizer(username string) string {
@@ -59,26 +55,65 @@ func UsernameSanitizer(username string) string {
 // 	return false // username is already taken
 // }
 
+const (
+	darwin  = iota // 0
+	linux          // 1
+	windows        // 2
+	unknown        // 3
+)
+
+// simple check for OS
+func checkOS() int {
+	switch os := runtime.GOOS; os {
+	case "darwin":
+		return darwin
+	case "linux":
+		return linux
+	case "windows":
+		return windows
+	default:
+		return unknown
+	}
+}
+
+// CreateLocation creates the target directory for the database depending on the OS
+func (cfg *DatabaseInfo) CreateLocation() error {
+	// store the OS type in j
+	j := checkOS()
+	// switch on the OS type and assign the appropriate location
+	switch j {
+	case darwin:
+		cfg.Location = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", cfg.Name)
+	case linux:
+		cfg.Location = filepath.Join(os.Getenv("HOME"), ".beatrice", cfg.Name)
+	case windows:
+		cfg.Location = filepath.Join(os.Getenv("APPDATA"), cfg.Name)
+	default:
+		return fmt.Errorf("unknown OS")
+	}
+	return nil
+}
+
 // IsValidLocation returns true if the given string is a valid location
 // queries the file system to check if the location exists
-func IsValidLocation(location string) (bool, error) {
+func (cfg *DatabaseInfo) IsValidLocation(location string) (bool, error) {
 	if _, err := os.Open(location); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, fmt.Errorf("invalid location: %w", err)
+		err := cfg.CreateLocation()
+		if err != nil {
+			return false, fmt.Errorf("failed to create location: %w", err)
 		}
-		return false, fmt.Errorf("failed to open location: %w", err)
 	}
 	return true, nil
 }
 
 // Pingdb checks if the database is accessible
 // uses the location and name from the config struct. No need to pass it in.
-func Pingdb() (*sql.DB, error) {
-	cfg := NewDatabaseInfo()
-	// enable foreign key constraints
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", cfg.Name)
+func (cfg *DatabaseInfo) Pingdb() (*sql.DB, error) {
+	// join the target directory and the database name to create the final path
+	dbPath := filepath.Join(cfg.Location, cfg.Name)
+	cfg.Dsn = fmt.Sprintf("file:%s/?_foreign_keys=on&_pragma=busy_timeout(50000)", dbPath)
 	// open the database connection
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", cfg.Dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -89,21 +124,4 @@ func Pingdb() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 	return db, nil
-}
-
-// UnmarshalPacket unmarshals the given buffer and returns the envelope struct and error
-// this as passed to the handle function to handle the packet based on the packet type
-func UnmarshalPacket(conn net.Conn, buf []byte, n int, env any) error {
-	if err := json.Unmarshal(buf[:n], env); err != nil {
-		// log error
-		slog.Error("Error unmarshalling envelope:", "err", err, "client", conn.RemoteAddr())
-
-		// Send error packet to client
-		shared.SendPacketToClient(conn, "e", &shared.ErrPacket{
-			Message: "invalid_protocol_format",
-		})
-
-		return err
-	}
-	return nil
 }
