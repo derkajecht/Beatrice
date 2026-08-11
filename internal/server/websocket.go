@@ -13,16 +13,10 @@ import (
 	"github.com/derkajecht/Beatrice/internal/shared"
 )
 
-func HubInit(dbLocation string) *Hub {
-	return &Hub{
-		DatabasePath: dbLocation,
-	}
-}
-
 // addClient adds a client to the hub clients map
 func (h *Hub) addClient(c *ServerClient) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	h.clients[c.ID] = c
 }
 
@@ -34,8 +28,8 @@ func (h *Hub) getClient(id string) *ServerClient {
 
 // removeClient removes a client from the hub clients map
 func (h *Hub) removeClient(c string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	delete(h.clients, c)
 }
 
@@ -133,13 +127,11 @@ func StartServer(host, port, dbName, dbLocation string) {
 		dbLocation = "~/beatrice"
 	}
 
-	db, dbLocation, err := NewDatabase(dbName, dbLocation)
+	db, _, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
 	defer db.Close()
-	// store the database path in the server struct
-	HubInit(dbLocation)
 	// log that the database connection was established
 	slog.Info("Database connection established")
 

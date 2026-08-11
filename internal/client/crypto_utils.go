@@ -8,7 +8,6 @@ import (
 
 	"crypto/hpke"
 
-	"github.com/derkajecht/Beatrice/internal/shared"
 	"github.com/gammazero/deque"
 )
 
@@ -22,36 +21,40 @@ func NewCryptoSuite() SuiteConfig {
 	}
 }
 
+func NewCryptoPacket(suite SuiteConfig, priv, pub []byte) *CryptoPacket {
+	return &CryptoPacket{
+		Suite:      suite,
+		PrivKey:    priv,
+		PubKey:     pub,
+		SeenNonces: new(deque.Deque[string]),
+		KeyCache:   make(map[string]string),
+	}
+}
+
 // NewUserSession returns a new ephemeral key pair and session.
 // this would return on failure to generate a new key pair
-func NewUserSession() (shared.PubKey, CryptoPacket, error) {
+func NewUserSession() error {
 	suite := NewCryptoSuite()
 
 	// generate private key using the crypto suite
 	privKey, err := suite.KEM.GenerateKey()
 	if err != nil {
-		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("failed to generate private key: %w", err)
+		return fmt.Errorf("failed to generate private key: %w", err)
 	}
 	if privKey == nil {
-		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("private key is nil")
+		return fmt.Errorf("private key is nil")
 	}
 
 	// derive the public key from the private key and convert both to bytes
 	pubBytes := privKey.PublicKey().Bytes()
 	privBytes, err := privKey.Bytes()
 	if err != nil {
-		return shared.PubKey{}, CryptoPacket{}, fmt.Errorf("failed to serialize private key: %w", err)
+		return fmt.Errorf("failed to serialize private key: %w", err)
 	}
 
 	// create a new crypto packet with the generated key pair
 	// add the public key to the crypto packet and to the shared PubKey struct
-	cryptoPacket := &CryptoPacket{
-		Suite:      suite,
-		PrivKey:    privBytes,
-		PubKey:     pubBytes,
-		SeenNonces: new(deque.Deque[string]),
-		KeyCache:   make(map[string]string),
-	}
+	NewCryptoPacket(suite, privBytes, pubBytes)
 
-	return shared.PubKey{PubKey: cryptoPacket.PubKey}, *cryptoPacket, nil
+	return nil
 }

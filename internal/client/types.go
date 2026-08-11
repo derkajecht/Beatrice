@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/hpke"
+	"sync"
 
 	"github.com/coder/websocket"
 	"github.com/derkajecht/Beatrice/internal/shared"
@@ -30,11 +31,13 @@ type CryptoPacket struct {
 
 // Stores major parts of the user's information
 type User struct {
+	mu             sync.RWMutex              `json:"-"`
 	Conn           *websocket.Conn           `json:"-"`
 	Nickname       string                    `json:"n"`
 	Crypto         CryptoPacket              `json:"c"`
 	ConnectedUsers map[string][]byte         `json:"cu"`
 	TuiChan        chan shared.GeneralPacket `json:"-"`
+	Addr           string
 }
 
 func NewUser() *User {

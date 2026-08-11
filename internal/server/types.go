@@ -26,7 +26,6 @@ type Hub struct {
 	addClientChn    chan *ServerClient
 	broadcastChn    chan []byte
 	removeClientChn chan *ServerClient
-	DatabasePath    string
 }
 
 func NewHub() *Hub {
