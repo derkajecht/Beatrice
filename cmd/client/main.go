@@ -4,7 +4,7 @@ import (
 	"flag"
 	"sync"
 
-	"github.com/derkajecht/Beatrice/internal/client"
+	"github.com/derkajecht/Beatrice/src/client"
 )
 
 func main() {

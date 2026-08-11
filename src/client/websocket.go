@@ -13,7 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 func (u *User) ConnectWithRetry(ctx context.Context, retryCount int) (*websocket.Conn, error) {

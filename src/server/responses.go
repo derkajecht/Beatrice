@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 // SendPacketToClient sends a packet or message to the client

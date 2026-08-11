@@ -1,5 +1,7 @@
 package server
 
+import "database/sql"
+
 type ConnectionInfo struct {
 	Host    string
 	Port    string
@@ -7,6 +9,7 @@ type ConnectionInfo struct {
 }
 
 type DatabaseInfo struct {
+	DB       *sql.DB
 	Name     string
 	Location string
 	Dsn      string

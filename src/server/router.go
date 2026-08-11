@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 // HandleHandshake receives the handshake packet from the client

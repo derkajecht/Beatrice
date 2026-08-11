@@ -19,12 +19,24 @@ type ServerClient struct {
 	TuiChan  chan []byte
 }
 
+func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {
+	return &ServerClient{
+		ID:      ID,
+		Conn:    conn,
+		PubKey:  []byte{},
+		TuiChan: make(chan []byte),
+	}
+}
+
 // Hub represents the server-side hub for managing connections and data
 type Hub struct {
-	mu              sync.RWMutex
-	clients         map[string]*ServerClient
-	addClientChn    chan *ServerClient
-	broadcastChn    chan []byte
+	mu           sync.RWMutex
+	clients      map[string]*ServerClient
+	addClientChn chan *ServerClient
+	broadcastChn chan struct {
+		conn *ServerClient
+		data []byte
+	}
 	removeClientChn chan *ServerClient
 }
 
@@ -33,6 +45,9 @@ func NewHub() *Hub {
 		clients:         make(map[string]*ServerClient),
 		addClientChn:    make(chan *ServerClient),
 		removeClientChn: make(chan *ServerClient),
-		broadcastChn:    make(chan []byte),
+		broadcastChn: make(chan struct {
+			conn *ServerClient
+			data []byte
+		}),
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/shared"
 	"github.com/gammazero/deque"
 )
 

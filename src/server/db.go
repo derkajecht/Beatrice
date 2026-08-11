@@ -1,21 +1,20 @@
 package server
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
 
-	"github.com/derkajecht/Beatrice/internal/client"
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/client"
+	"github.com/derkajecht/Beatrice/src/shared"
 	_ "modernc.org/sqlite"
 )
 
 // NewDatabase initializes a new database connection
 // and checks if the connection is successful
 // if not, it will log the error and exit the program
-func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
+func NewDatabase(dbName, dbLocation string) (string, error) {
 
 	// create NewDatabaseInfo struct
 	cfg := NewDatabaseInfo(dbName, dbLocation)
@@ -23,7 +22,7 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	// loop through the inputs and assign the default values to the cfg struct if empty
 	if shared.HasEmptyArgs(dbName, dbLocation) {
 		slog.Warn("No database name or location provided: Defaulting to beatrice.db and ./beatrice")
-		return nil, "", fmt.Errorf("no database name or location provided")
+		return "", fmt.Errorf("no database name or location provided")
 	}
 
 	// validate the database location
@@ -36,15 +35,16 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	// if it does exist, it will be ignored
 	err := os.MkdirAll(cfg.Location, 0755)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create target directory: %w", err)
+		return "", fmt.Errorf("failed to create target directory: %w", err)
 	}
 
 	// open the database connection
 	db, err := cfg.Pingdb()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to attach database: %w", err)
+		return "", fmt.Errorf("failed to attach database: %w", err)
 	}
-	defer db.Close()
+	cfg.DB = db // set db to the struct so it can be called throughout the server
+	defer cfg.DB.Close()
 
 	schema := `
 		CREATE TABLE IF NOT EXISTS users (
@@ -69,13 +69,13 @@ func NewDatabase(dbName, dbLocation string) (*sql.DB, string, error) {
 	_, err = db.Exec(schema)
 	if err != nil {
 		db.Close() // clean up on failure
-		return nil, "", fmt.Errorf("failed to create database schema: %w", err)
+		return "", fmt.Errorf("failed to create database schema: %w", err)
 	}
 
 	// log that the database was initialized successfully
-	log.Println("Database initialized successfully")
+	log.Printf("Database initialized successfully at %s", cfg.Location)
 
-	return db, cfg.Location, nil
+	return cfg.Location, nil
 }
 
 // StoreUser adds a new user to the database - nickname and public key

@@ -7,16 +7,19 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/derkajecht/Beatrice/internal/shared"
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 // addClient adds a client to the hub clients map
 func (h *Hub) addClient(c *ServerClient) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.clients[c.ID] = c
 }
 
@@ -28,13 +31,13 @@ func (h *Hub) getClient(id string) *ServerClient {
 
 // removeClient removes a client from the hub clients map
 func (h *Hub) removeClient(c string) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	delete(h.clients, c)
 }
 
 // Listener is the main listener for the hub
-func (h *Hub) Listener(ctx context.Context, c *ServerClient) {
+func (h *Hub) Listener(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -46,10 +49,10 @@ func (h *Hub) Listener(ctx context.Context, c *ServerClient) {
 			h.removeClient(client.ID)
 
 		// TODO: implement the handling of the receieved packets
-		case msg := <-h.broadcastChn:
+		case msg := <-h.broadcastChn: // msg recieves struct with conn and data
 			// unmarshal the message to json
 			var packet shared.GeneralPacket
-			err := json.Unmarshal(msg, &packet)
+			err := json.Unmarshal(msg.data, &packet)
 			if err != nil {
 				slog.Error("Error unmarshalling message packet", "err", err)
 				break
@@ -63,7 +66,7 @@ func (h *Hub) Listener(ctx context.Context, c *ServerClient) {
 				if err := HandleHandshake(packet); err != nil {
 					slog.Error("error handling handshake", "err", err)
 					// send failure packet back to client to trigger tui event
-					err := h.SendPacketToClient(c, "err", &shared.ErrPacket{
+					err := h.SendPacketToClient(msg.conn, "err", &shared.ErrPacket{
 						Message: "err_handshake_failed",
 					})
 					if err != nil {
@@ -88,6 +91,11 @@ func (h *Hub) Listener(ctx context.Context, c *ServerClient) {
 	}
 }
 
+type msg struct {
+	conn *ServerClient
+	data []byte
+}
+
 // wsHandler handles incoming websocket connections
 // it distributes the connection to the appropriate channels
 func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
@@ -109,7 +117,7 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 			// slog.Error("error in Receive Message: ", err.Error())
 			break
 		}
-		h.broadcastChn <- m
+		h.broadcastChn <- msg{conn: c, data: m}
 	}
 }
 
@@ -127,16 +135,24 @@ func StartServer(host, port, dbName, dbLocation string) {
 		dbLocation = "~/beatrice"
 	}
 
-	db, _, err := NewDatabase(dbName, dbLocation)
+	// create server context
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	_, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
-	defer db.Close()
+	// NOTE: need to call defer db.Close() here?
+
 	// log that the database connection was established
 	slog.Info("Database connection established")
 
 	// register websocket and hub
 	hub := NewHub()
+	// start the listener before wsHandler
+	hub.Listener(ctx)
+	wsHandler(ctx, hub)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
@@ -145,18 +161,7 @@ func StartServer(host, port, dbName, dbLocation string) {
 			return
 		}
 		remoteAddr := r.RemoteAddr
-		client := &ServerClient{
-			ID:      remoteAddr,
-			Conn:    conn,
-			PubKey:  []byte{},
-			TuiChan: make(chan []byte),
-		}
-
-		// get the context
-		ctx := r.Context()
-		// start the listener before wsHandler
-		go hub.Listener(ctx, client)
-		wsHandler(ctx, client, hub)
+		NewServerClient(remoteAddr, conn)
 	})
 
 	addr := fmt.Sprintf("%s:%s", host, port)

@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -85,7 +87,7 @@ func (cfg *DatabaseInfo) CreateLocation() error {
 	case darwin:
 		cfg.Location = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", cfg.Name)
 	case linux:
-		cfg.Location = filepath.Join(os.Getenv("HOME"), ".beatrice", cfg.Name)
+		cfg.Location = filepath.Join(os.Getenv("HOME"), ".beatrice")
 	case windows:
 		cfg.Location = filepath.Join(os.Getenv("APPDATA"), cfg.Name)
 	default:
@@ -110,16 +112,28 @@ func (cfg *DatabaseInfo) IsValidLocation(location string) (bool, error) {
 // uses the location and name from the config struct. No need to pass it in.
 func (cfg *DatabaseInfo) Pingdb() (*sql.DB, error) {
 	// join the target directory and the database name to create the final path
+	// ensure that ~ is expanded before opening the connection
+	if strings.HasPrefix(cfg.Location, "~") {
+		expandedPath, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		cfg.Location = strings.Replace(cfg.Location, "~", expandedPath, 1)
+	}
 	dbPath := filepath.Join(cfg.Location, cfg.Name)
 	cfg.Dsn = fmt.Sprintf("file:%s/?_foreign_keys=on&_pragma=busy_timeout(50000)", dbPath)
+
 	// open the database connection
 	db, err := sql.Open("sqlite", cfg.Dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	// check if the database is accessible
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		db.Close() // clean up on failure
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
