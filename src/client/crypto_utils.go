@@ -33,28 +33,26 @@ func NewCryptoPacket(suite SuiteConfig, priv, pub []byte) *CryptoPacket {
 
 // NewUserSession returns a new ephemeral key pair and session.
 // this would return on failure to generate a new key pair
-func NewUserSession() error {
+func NewUserSession() (*CryptoPacket, error) {
 	suite := NewCryptoSuite()
 
 	// generate private key using the crypto suite
 	privKey, err := suite.KEM.GenerateKey()
 	if err != nil {
-		return fmt.Errorf("failed to generate private key: %w", err)
+		return nil, fmt.Errorf("failed to generate private key: %w", err)
 	}
 	if privKey == nil {
-		return fmt.Errorf("private key is nil")
+		return nil, fmt.Errorf("private key is nil")
 	}
 
 	// derive the public key from the private key and convert both to bytes
 	pubBytes := privKey.PublicKey().Bytes()
 	privBytes, err := privKey.Bytes()
 	if err != nil {
-		return fmt.Errorf("failed to serialize private key: %w", err)
+		return nil, fmt.Errorf("failed to serialize private key: %w", err)
 	}
 
 	// create a new crypto packet with the generated key pair
 	// add the public key to the crypto packet and to the shared PubKey struct
-	NewCryptoPacket(suite, privBytes, pubBytes)
-
-	return nil
+	return NewCryptoPacket(suite, privBytes, pubBytes), nil
 }

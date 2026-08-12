@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -29,12 +31,15 @@ func (m SidebarConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 }
 
 func (m SidebarConfig) View(width, height int, focused bool) string {
+	content := "Active Chats"
+	if len(m.UserList) > 0 {
+		content += "\n\n" + strings.Join(m.UserList, "\n")
+	}
 	return lipgloss.NewStyle().
 		Width(width - 2).
 		Height(height).
-		// BorderRight(true).
 		Border(lipgloss.RoundedBorder()).
-		Render("Active Chats")
+		Render(content)
 }
 
 func (m SidebarConfig) Name() string    { return "chat" }

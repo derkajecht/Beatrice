@@ -1,55 +1,45 @@
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 type keyMap struct {
-	Quit   key.Binding
-	Next   key.Binding
-	Prev   key.Binding
-	Select key.Binding
+	Quit key.Binding
 }
 
 var keys = keyMap{
 	Quit: key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
-	Next: key.NewBinding(key.WithKeys("ctrl+l", "tab", "right"), key.WithHelp("ctrl+l", "next section")),
-	Prev: key.NewBinding(key.WithKeys("ctrl+h", "shift+tab", "left"), key.WithHelp("ctrl+h", "prev section")),
-	// Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 }
 
 type model struct {
+	packetCh <-chan shared.GeneralPacket
 	logCh    <-chan []byte
-	width    int
-	height   int
-	sections []Section
-	focused  int
-	chosen   string
-	tooSmall bool
+
 	viewport viewport.Model
 	sidebar  Section
 	chat     Section
 	header   Section
+	tooSmall bool
 }
 
 type logMsg string
+type packetMsg shared.GeneralPacket
+type chatMsg string
 
-func NewTUI(logCh <-chan []byte) {
-	tea.NewProgram(newModel(logCh), tea.WithAltScreen()).Run()
-}
-
-func newModel(logCh <-chan []byte) model {
-	// TODO: read user defined config and set main chat width/height
-	sections := BuildSections(ChatConfig{})
-
+func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte) model {
 	return model{
+		packetCh: packetCh,
 		logCh:    logCh,
-		sections: sections,
 		sidebar:  newSidebarModel(SidebarConfig{}),
 		chat:     newChatModel(ChatViewConfig{}),
 		header:   newHeaderModel(HeaderConfig{}),
@@ -57,65 +47,79 @@ func newModel(logCh <-chan []byte) model {
 }
 
 func (m model) Init() tea.Cmd {
-	// call log channel init and init all sections
-	waitForLog(m.logCh)
-	cmds := make([]tea.Cmd, len(m.sections))
-	for i, s := range m.sections {
-		cmds[i] = s.Init()
-	}
-	return tea.Batch(cmds...)
+	return tea.Batch(waitForLog(m.logCh), waitForPacket(m.packetCh))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// var cmd tea.Cmd
-
 	switch msg := msg.(type) {
-	// TODO: refine the key check, quite bad atm
 	case tea.WindowSizeMsg:
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height)
-		// m.width, m.height = msg.Width, msg.Height
 		m.viewport.GotoBottom()
 		return m, nil
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, keys.Quit):
+		if key.Matches(msg, keys.Quit) {
 			return m, tea.Quit
-		case key.Matches(msg, keys.Next):
-			if len(m.sections) > 0 {
-				m.focused = (m.focused + 1) % len(m.sections)
-			}
-		case key.Matches(msg, keys.Prev):
-			if len(m.sections) > 0 {
-				m.focused--
-				if m.focused < 0 {
-					m.focused = len(m.sections) - 1
-				}
-			}
-			// case key.Matches(msg, keys.Select):
-			// 	if len(m.sections) > 0 {
-			// 		m.sections[m.focused], _ = m.sections[m.focused].Update(msg)
-			// 		if chosen := m.sections[m.focused].Chosen(); chosen != "" {
-			// 			m.chosen = chosen
-			// 			return m, tea.Quit
-			// 		}
-			// 	}
 		}
 	case logMsg:
-		// NOTE: re-enable this after building the tui
 		updated, _ := m.chat.Update(msg)
 		m.chat = updated
 		return m, waitForLog(m.logCh)
-
+	case packetMsg:
+		var cmd tea.Cmd
+		m, cmd = m.handlePacket(msg)
+		return m, tea.Batch(waitForPacket(m.packetCh), cmd)
 	}
 	return m, nil
 }
 
-func (m model) View() string {
-	// if m.viewport.Width() == 0 {
-	// 	return "Loading..."
-	// }
+func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
+	switch p.Type {
+	case "d":
+		var dp shared.DirPacket
+		if err := json.Unmarshal(p.Message, &dp); err != nil {
+			slog.Debug("failed to unmarshal DirPacket", "err", err)
+			return m, nil
+		}
+		s, cmd := m.sidebar.Update(struct{ CurrentUsers map[string][]byte }{CurrentUsers: dp.CurrentUsers})
+		m.sidebar = s
+		return m, cmd
+	case "j":
+		var jp shared.JoinPacket
+		if err := json.Unmarshal(p.Message, &jp); err != nil {
+			slog.Debug("failed to unmarshal JoinPacket", "err", err)
+			return m, nil
+		}
+		s, cmd := m.sidebar.Update(struct{ CurrentUsers map[string][]byte }{CurrentUsers: map[string][]byte{jp.Nickname: jp.PubKey}}) // don't show pub key in the sidebar
+		m.sidebar = s
+		return m, cmd
+	case "m":
+		var mp shared.MessagePacket
+		if err := json.Unmarshal(p.Message, &mp); err != nil {
+			slog.Debug("failed to unmarshal MessagePacket", "err", err)
+			return m, nil
+		}
+		s, cmd := m.chat.Update(chatMsg(fmt.Sprintf("%s: %s", mp.Sender, mp.Content)))
+		m.chat = s
+		return m, cmd
+	case "e":
+		var ep shared.ErrPacket
+		if err := json.Unmarshal(p.Message, &ep); err != nil {
+			slog.Debug("failed to unmarshal ErrPacket", "err", err)
+			return m, nil
+		}
+		if h, ok := m.header.(HeaderConfig); ok {
+			h.Status = ep.Message
+			m.header = h
+		}
+		return m, nil
+	default:
+		slog.Debug("unknown packet type", "type", p.Type)
+		return m, nil
+	}
+}
 
+func (m model) View() string {
 	sidebarWidth := m.viewport.Width() / 5
 	bodyWidth := m.viewport.Width() - sidebarWidth - 2
 	bodyHeight := max(1, m.viewport.Height()-4)
@@ -137,5 +141,15 @@ func waitForLog(logCh <-chan []byte) tea.Cmd {
 			return nil
 		}
 		return logMsg(strings.TrimSpace(string(message)))
+	}
+}
+
+func waitForPacket(packetCh <-chan shared.GeneralPacket) tea.Cmd {
+	return func() tea.Msg {
+		packet, ok := <-packetCh
+		if !ok {
+			return nil
+		}
+		return packetMsg(packet)
 	}
 }

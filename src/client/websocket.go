@@ -11,8 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/derkajecht/Beatrice/src/client/tui"
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
@@ -68,6 +70,14 @@ func (u *User) NewChatClient(ctx context.Context) {
 				u.mu.Unlock()
 				defer conn.Close(websocket.StatusInternalError, "Client closed")
 
+				conn.SetReadLimit(1 << 20) // 1 MiB
+
+				// send handshake to server
+				err = u.SendPacketToServer("h", shared.HandshakePacket{Nickname: u.Nickname, PubKey: u.Crypto.PubKey})
+				if err != nil {
+					slog.Error("failed to send handshake", "err", err)
+				}
+
 				// run readloop in a goroutine for async reading
 				// uses parent ctx - signal.NotifyContext() - only cancels on system signals (ctrl + c to exit)
 				u.readLoop(ctx) // INFO: need to put inside go routine?
@@ -104,7 +114,7 @@ func (u *User) readLoop(ctx context.Context) {
 			slog.Error("Error unmarshalling message packet", "err", err)
 			continue
 		}
-		slog.Info("packet successfully unmarshalled", "packet", packet)
+		slog.Debug("packet successfully unmarshalled", "packet", packet)
 
 		select {
 		case <-ctx.Done():
@@ -127,15 +137,14 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 	conn := u.Conn
 	u.mu.RUnlock()
 
-	ctx := context.Background()
-	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	if conn == nil {
+		return fmt.Errorf("err_conn_is_nil")
+	}
 
 	// marshal inner packet to JSON
-	innerBytes, marshalErr := json.Marshal(innerPacket)
-	if marshalErr != nil {
-		slog.Error("err_marshalling_inner_packet", "err", marshalErr)
-		return marshalErr
+	innerBytes, err := json.Marshal(innerPacket)
+	if err != nil {
+		return err
 	}
 
 	// create envelope struct and wrap inner packet in it
@@ -144,18 +153,14 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 		Message: innerBytes,
 	}
 
-	// check if conn is alive and write envelope to connection
-	if conn == nil {
-		return fmt.Errorf("	err_conn_is_nil")
-	}
-	wsjson.Write(writeCtx, u.Conn, envelope)
-
-	return nil
+	writeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return wsjson.Write(writeCtx, conn, envelope)
 }
 
 // StartClient establishes a connection to the server using the host and port provided.
 // It returns an error if the host or port is empty.
-func StartClient(host, port string) error {
+func StartClient(host, port, nickname string) error {
 
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
@@ -166,14 +171,14 @@ func StartClient(host, port string) error {
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
-	err := NewUserSession()
+	cryptoPkt, err := NewUserSession()
 	if err != nil {
 		slog.Error("Error generating user session", "err", err)
 		return err
 	}
 
 	// format the address string
-	addr := fmt.Sprintf("ws://%s:%s", host, port)
+	addr := fmt.Sprintf("ws://%s:%s/ws", host, port)
 
 	// create a new context with a timeout of 30 seconds
 	rootCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -183,9 +188,14 @@ func StartClient(host, port string) error {
 	// initiates the conn and tuichan fields
 	user := NewUser()
 	user.Addr = addr
+	user.Nickname = nickname
+	user.Crypto = *cryptoPkt
 	go user.NewChatClient(rootCtx) // non-blocking
 
-	//  TODO: call start TUI and pass in rootCtx
-
+	logCh := LoggerSetup()
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh), tea.WithAltScreen())
+	if _, err := program.Run(); err != nil {
+		return fmt.Errorf("tui error: %w", err)
+	}
 	return nil
 }

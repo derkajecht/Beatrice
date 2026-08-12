@@ -26,37 +26,6 @@ func UsernameSanitizer(username string) string {
 	return username
 }
 
-// IsValidUsername returns true if the given string is not already taken
-// also checks username length and sanitizes the username
-// func IsValidUsername(username string) bool {
-// 	// Sanitize the username first to remove any invalid characters
-// 	username = UsernameSanitizer(username)
-// 	if len(username) < 3 {
-// 		// Draw to TUI and re-prompt the user for a valid username
-// 		slog.Warn("Username is too short. Please try again.", "username", username)
-// 		return false // username is too short
-// 	}
-// 	// ping the db first
-// 	db, err := Pingdb()
-// 	if err != nil {
-// 		slog.Error("Error pinging database:", "err", err)
-// 		return false
-// 	}
-//
-// 	// declare a variable to store the number of rows
-// 	var exists int
-// 	// check if the username exists in the database
-// 	err = db.QueryRow("SELECT id FROM users WHERE nickname = ?", username).Scan(&exists)
-// 	if err != nil {
-// 		if errors.Is(err, sql.ErrNoRows) {
-// 			return true // username is available
-// 		}
-// 		// this could be caused by a race condition, so just log the error
-// 		slog.Error("Error checking if username is available:", "err", err, "username", username)
-// 	}
-// 	return false // username is already taken
-// }
-
 const (
 	darwin  = iota // 0
 	linux          // 1
@@ -85,27 +54,15 @@ func (cfg *DatabaseInfo) CreateLocation() error {
 	// switch on the OS type and assign the appropriate location
 	switch j {
 	case darwin:
-		cfg.Location = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", cfg.Name)
+		cfg.Location = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Beatrice")
 	case linux:
 		cfg.Location = filepath.Join(os.Getenv("HOME"), ".beatrice")
 	case windows:
-		cfg.Location = filepath.Join(os.Getenv("APPDATA"), cfg.Name)
+		cfg.Location = filepath.Join(os.Getenv("APPDATA"), "Beatrice")
 	default:
 		return fmt.Errorf("unknown OS")
 	}
 	return nil
-}
-
-// IsValidLocation returns true if the given string is a valid location
-// queries the file system to check if the location exists
-func (cfg *DatabaseInfo) IsValidLocation(location string) (bool, error) {
-	if _, err := os.Open(location); err != nil {
-		err := cfg.CreateLocation()
-		if err != nil {
-			return false, fmt.Errorf("failed to create location: %w", err)
-		}
-	}
-	return true, nil
 }
 
 // Pingdb checks if the database is accessible

@@ -23,6 +23,9 @@ func (m ChatViewConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 	if log, ok := msg.(logMsg); ok {
 		m.Messages = append(m.Messages, string(log))
 	}
+	if cm, ok := msg.(chatMsg); ok {
+		m.Messages = append(m.Messages, string(cm))
+	}
 	return m, nil
 }
 

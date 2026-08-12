@@ -1,1 +1,7 @@
-: api/connection.go
+Package layout (Go rewrite, see go-rewrite.md):
+cmd/client     - client entrypoint (flags: host/port/nick)
+cmd/server     - server entrypoint (flags: host/port/db/dbLocation)
+src/client     - user session, ws connect/read loop, handshake send, logger
+src/client/tui - bubbletea TUI (header/sidebar/chat models)
+src/server     - hub, ws handler/listener, router (handshake/message/join/leave), db (sqlite)
+src/shared     - wire protocol types (GeneralPacket envelope + payloads), arg helpers

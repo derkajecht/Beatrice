@@ -2,6 +2,7 @@ package server
 
 import (
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -16,38 +17,36 @@ type ServerClient struct {
 	Conn     *websocket.Conn
 	Nickname string
 	PubKey   []byte
-	TuiChan  chan []byte
 }
 
 func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {
 	return &ServerClient{
-		ID:      ID,
-		Conn:    conn,
-		PubKey:  []byte{},
-		TuiChan: make(chan []byte),
+		ID:     ID,
+		Conn:   conn,
+		PubKey: []byte{},
 	}
+}
+
+// broadcastMsg packages a client and raw message data for the hub broadcaster.
+type broadcastMsg struct {
+	conn *ServerClient
+	data []byte
 }
 
 // Hub represents the server-side hub for managing connections and data
 type Hub struct {
-	mu           sync.RWMutex
-	clients      map[string]*ServerClient
-	addClientChn chan *ServerClient
-	broadcastChn chan struct {
-		conn *ServerClient
-		data []byte
-	}
-	removeClientChn chan *ServerClient
+	mu                sync.RWMutex
+	clients           map[string]*ServerClient
+	broadcastChn      chan broadcastMsg
+	db                *DatabaseInfo
+	InactivityTimeout time.Duration
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:         make(map[string]*ServerClient),
-		addClientChn:    make(chan *ServerClient),
-		removeClientChn: make(chan *ServerClient),
-		broadcastChn: make(chan struct {
-			conn *ServerClient
-			data []byte
-		}),
+		clients:      make(map[string]*ServerClient),
+		broadcastChn: make(chan broadcastMsg, 64),
+		// TODO: make this configurable
+		InactivityTimeout: 180 * time.Second, // 3 minutes timeout
 	}
 }

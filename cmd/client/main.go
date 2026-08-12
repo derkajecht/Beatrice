@@ -2,26 +2,20 @@ package main
 
 import (
 	"flag"
-	"sync"
+	"log"
 
 	"github.com/derkajecht/Beatrice/src/client"
 )
 
 func main() {
-
-	// Parse command line arguments
+	// Command line args
 	host := flag.String("host", "localhost", "Host of the server")
 	port := flag.String("port", "8080", "Port of the server")
+	nick := flag.String("nick", "anon", "Nickname to use")
 	flag.Parse()
 
-	// start the client with the host and port provided
-	wg := new(sync.WaitGroup)
-	wg.Add(1) // add a wait group to ensure the server is closed after the main function is done
-	wg.Go(func() {
-		client.StartClient(*host, *port)
-	})
-	wg.Wait() // wait for the server to close
-
-	// example usage:
-	// go run main.go -host localhost -port 8080 -contype tcp
+	// start the client with the provided args
+	if err := client.StartClient(*host, *port, *nick); err != nil {
+		log.Fatal(err)
+	}
 }

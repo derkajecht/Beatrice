@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -12,20 +13,18 @@ import (
 
 // SendPacketToClient sends a packet or message to the client
 // and returns an error if any
-func (h *Hub) SendPacketToClient(c *ServerClient, packetType string, innerPacket any) error {
+func SendPacketToClient(c *ServerClient, packetType string, innerPacket any) error {
+	if c == nil || c.Conn == nil {
+		return fmt.Errorf("client not registered")
+	}
 
-	ctx := context.Background()
-	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	writeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	// get the client from the hub
-	client := h.getClient(c.ID)
 
 	// marshal inner packet to JSON
 	innerBytes, marshalErr := json.Marshal(innerPacket)
 	if marshalErr != nil {
-		slog.Error("err_marshalling_inner_packet", "err", marshalErr, "client", client)
-		return marshalErr
+		return fmt.Errorf("err_marshalling_inner_packet: %w", marshalErr)
 	}
 
 	// create envelope struct and wrap inner packet in it
@@ -36,30 +35,24 @@ func (h *Hub) SendPacketToClient(c *ServerClient, packetType string, innerPacket
 
 	envelopeBytes, marshalErr := json.Marshal(envelope)
 	if marshalErr != nil {
-		slog.Error("err_marshalling_envelope", "err", marshalErr, "client", client)
-		return marshalErr
+		return fmt.Errorf("err_marshalling_envelope: %w", marshalErr)
 	}
 
-	// marshal envelope struct to JSON
-	if err := client.Conn.Write(writeCtx, websocket.MessageText, envelopeBytes); err != nil {
-		slog.Error("err_marshalling_envelope", "err", err)
-		return err
+	// write directly to the passed client's connection
+	if err := c.Conn.Write(writeCtx, websocket.MessageText, envelopeBytes); err != nil {
+		return fmt.Errorf("err_writing_to_client: %w", err)
 	}
 
 	return nil
 }
 
-// SendMessage sends a message to the server when the user presses enter in the TUI
-// func (u User) SendMessage(ctx context.Context, msg []byte) error {
-// 	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-// 	defer cancel()
-// 	return u.Conn.Write(writeCtx, websocket.MessageText, msg)
-// }
-
-// DisconnectAndQuit closes the connection and quits the application
-// func DisconnectAndQuit(conn net.Conn) {
-// 	SendPacketToClient(conn, "q", &ErrPacket{
-// 		Message: "err_connection_closed",
-// 	})
-// 	conn.Close()
-// }
+// Broadcast sends a packet to all connected clients
+func (h *Hub) Broadcast(packetType string, innerPacket any) {
+	h.mu.RLock() // NOTE: supposed to be read only lock and unlock?
+	defer h.mu.RUnlock()
+	for _, c := range h.clients {
+		if err := SendPacketToClient(c, packetType, innerPacket); err != nil {
+			slog.Error("error broadcasting to client", "client", c.ID, "err", err)
+		}
+	}
+}

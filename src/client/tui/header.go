@@ -25,12 +25,14 @@ func (m HeaderConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 }
 
 func (m HeaderConfig) View(width, height int, focused bool) string {
-	// TODO: make separate components for status and focused chat
-	// join together with JoinHorizontal
+	status := m.Status
+	if status == "" {
+		status = "Connected"
+	}
 	return lipgloss.NewStyle().
 		Width(width).
 		Height(height - 2).
-		Render("Placeholder")
+		Render(status)
 }
 
 func (m HeaderConfig) Name() string    { return "header" }

@@ -6,11 +6,6 @@ import (
 	"slices"
 )
 
-// IsEmpty returns true if the given string is empty
-func IsEmpty(s string) bool {
-	return s == ""
-}
-
 // HasEmptyArgs returns false if any of the inputs are empty
 func HasEmptyArgs(args ...string) bool {
 	return slices.Contains(args, "")

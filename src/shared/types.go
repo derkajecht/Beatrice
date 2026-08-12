@@ -50,10 +50,6 @@ type ErrPacket struct {
 	Message string `json:"m"`
 }
 
-type SuccessPacket struct {
-	Message string `json:"m"`
-}
-
 type PubKey struct {
 	PubKey []byte `json:"k"`
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -42,83 +43,102 @@ func (h *Hub) Listener(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case client := <-h.addClientChn:
-			// add client to the map
-			h.addClient(client)
-		case client := <-h.removeClientChn:
-			h.removeClient(client.ID)
-
-		// TODO: implement the handling of the receieved packets
-		case msg := <-h.broadcastChn: // msg recieves struct with conn and data
-			// unmarshal the message to json
+		case msg := <-h.broadcastChn:
 			var packet shared.GeneralPacket
 			err := json.Unmarshal(msg.data, &packet)
 			if err != nil {
 				slog.Error("Error unmarshalling message packet", "err", err)
-				break
+				continue
 			}
-			slog.Info("packet successfully unmarshalled", "packet", packet)
 
-			// call handshake function
 			switch packet.Type {
-			case "h": // handshake
-				// TODO: finish writing the handshake function
-				if err := HandleHandshake(packet); err != nil {
+			case "h":
+				if err := HandleHandshake(h, msg.conn, packet); err != nil {
 					slog.Error("error handling handshake", "err", err)
-					// send failure packet back to client to trigger tui event
-					err := h.SendPacketToClient(msg.conn, "err", &shared.ErrPacket{
+					_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
 						Message: "err_handshake_failed",
 					})
-					if err != nil {
-						slog.Error("error sending handshake failure packet", "err", err)
-					}
 				}
-
-			// case "challenge":
-			// 	HandleChallenge(client, h.clients[client])
-			// 	case "message":
-			// 		HandleMessage(client, h.clients[client])
-			// 	case "join":
-			// 		HandleJoin(client, h.clients[client])
-			// 	case "leave":
-			// 		HandleLeave(client, h.clients[client])
-			// 	case "error":
-			// 		HandleError(client, h.clients[client])
+			case "m":
+				if err := HandleMessage(h, msg.conn, packet); err != nil {
+					slog.Error("error handling message", "err", err)
+				}
+			case "j":
+				if err := HandleJoin(h, msg.conn, packet); err != nil {
+					slog.Error("error handling join", "err", err)
+				}
+			case "l":
+				if err := HandleLeave(h, msg.conn, packet); err != nil {
+					slog.Error("error handling leave", "err", err)
+				}
 			default:
-				slog.Error("unknown packet type", "packet", packet)
+				slog.Error("unknown packet type", "type", packet.Type)
 			}
 		}
 	}
-}
-
-type msg struct {
-	conn *ServerClient
-	data []byte
 }
 
 // wsHandler handles incoming websocket connections
-// it distributes the connection to the appropriate channels
 func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
-	// close the connection when the TUI exits
+	// register the client synchronously first
+	h.addClient(c)
+
 	defer func() {
-		h.removeClientChn <- c
+		h.removeClient(c.ID)
 		c.Conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
-	// register the client in the hub
-	h.addClientChn <- c
-
-	// start the broadcast loop
-	// sends all messages received from the client to the hub via the broadcast channel
-	for {
-		var m []byte
-		err := wsjson.Read(ctx, c.Conn, &m)
-		if err != nil {
-			// slog.Error("error in Receive Message: ", err.Error())
-			break
+	// keepalive: ping the client at InactivityTimeout/3 intervals
+	go func() {
+		interval := h.InactivityTimeout / 3
+		if interval < time.Second {
+			interval = time.Second
 		}
-		h.broadcastChn <- msg{conn: c, data: m}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err := c.Conn.Ping(pctx)
+				cancel()
+				if err != nil {
+					slog.Debug("ping failed, closing connection", "client", c.ID, "err", err)
+					c.Conn.Close(websocket.StatusGoingAway, "ping timeout")
+					return
+				}
+			}
+		}
+	}()
+
+	for {
+		readCtx, cancel := context.WithTimeout(ctx, h.InactivityTimeout)
+		var m json.RawMessage
+		err := wsjson.Read(readCtx, c.Conn, &m)
+		cancel()
+		if err != nil {
+			return
+		}
+		h.broadcastChn <- broadcastMsg{conn: c, data: []byte(m)}
 	}
+}
+
+// NewServerHandler constructs the HTTP mux for websocket connections.
+func NewServerHandler(ctx context.Context, hub *Hub) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+		if err != nil {
+			slog.Error("Error accepting websocket connection", "err", err)
+			return
+		}
+		conn.SetReadLimit(1 << 20) // 1 MiB
+		c := NewServerClient(r.RemoteAddr, conn)
+		go wsHandler(ctx, c, hub)
+	})
+	return mux
 }
 
 // RunServer starts a new server instance and a new database connection
@@ -139,30 +159,22 @@ func StartServer(host, port, dbName, dbLocation string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	_, err := NewDatabase(dbName, dbLocation)
+	dbInfo, err := NewDatabase(dbName, dbLocation)
 	if err != nil {
 		log.Fatalf("Could not set up database: %v\n", err)
 	}
-	// NOTE: need to call defer db.Close() here?
+	defer dbInfo.DB.Close()
 
-	// log that the database connection was established
 	slog.Info("Database connection established")
 
 	// register websocket and hub
 	hub := NewHub()
-	// start the listener before wsHandler
-	hub.Listener(ctx)
-	wsHandler(ctx, hub)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			slog.Error("Error accepting websocket connection", "err", err)
-			return
-		}
-		remoteAddr := r.RemoteAddr
-		NewServerClient(remoteAddr, conn)
-	})
+	hub.db = dbInfo
+
+	// start the listener goroutine
+	go hub.Listener(ctx)
+
+	mux := NewServerHandler(ctx, hub)
 
 	addr := fmt.Sprintf("%s:%s", host, port)
 	server := http.Server{
