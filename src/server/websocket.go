@@ -181,7 +181,19 @@ func StartServer(host, port, dbName, dbLocation string) {
 		Addr:    addr,
 		Handler: mux,
 	}
-	if err := server.ListenAndServe(); err != nil {
+
+	// shut down the http server when ctx is cancelled (ctrl+c, SIGTERM)
+	go func() {
+		<-ctx.Done()
+		slog.Info("Shutting down server...")
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelShutdown()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("Error during shutdown", "err", err)
+		}
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("Error starting server", "err", err)
 	}
 }
