@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -86,4 +87,17 @@ func (cfg *DatabaseInfo) StoreUser(nickname string, pubKey []byte) error {
 		return fmt.Errorf("failed to store user %q: %w", nickname, err)
 	}
 	return nil
+}
+
+// GetUser returns the stored public key for a nickname and whether the user exists.
+func (cfg *DatabaseInfo) GetUser(nickname string) ([]byte, bool, error) {
+	var pubKey []byte
+	err := cfg.DB.QueryRow("SELECT public_key FROM users WHERE nickname = ?", nickname).Scan(&pubKey)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to look up user %q: %w", nickname, err)
+	}
+	return pubKey, true, nil
 }

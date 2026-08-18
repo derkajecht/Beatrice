@@ -17,13 +17,15 @@ type ServerClient struct {
 	Conn     *websocket.Conn
 	Nickname string
 	PubKey   []byte
+	Verified bool
 }
 
 func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {
 	return &ServerClient{
-		ID:     ID,
-		Conn:   conn,
-		PubKey: []byte{},
+		ID:       ID,
+		Conn:     conn,
+		PubKey:   []byte{},
+		Verified: false, // no trust by default. proven by challenge packet success
 	}
 }
 
@@ -39,14 +41,15 @@ type Hub struct {
 	clients           map[string]*ServerClient
 	broadcastChn      chan broadcastMsg
 	db                *DatabaseInfo
+	nonces            *Nonces
 	InactivityTimeout time.Duration
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:      make(map[string]*ServerClient),
-		broadcastChn: make(chan broadcastMsg, 64),
-		// TODO: make this configurable
+		clients:           make(map[string]*ServerClient),
+		broadcastChn:      make(chan broadcastMsg, 64),
+		nonces:            NonceManager(),
 		InactivityTimeout: 180 * time.Second, // 3 minutes timeout
 	}
 }

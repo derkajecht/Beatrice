@@ -1,6 +1,7 @@
 package client
 
 import (
+	"crypto/ed25519"
 	"crypto/hpke"
 	"sync"
 
@@ -20,13 +21,15 @@ type SuiteConfig struct {
 	Info []byte    `json:"info"`
 }
 
-// Stores the pubkey, privkey, nonces seen, and key cache
+// Stores the pubkey, privkey, identity key, nonces seen, and key cache
 type CryptoPacket struct {
-	Suite      SuiteConfig          `json:"s"`
-	PrivKey    []byte               `json:"priv"`
-	PubKey     []byte               `json:"pub"`
-	SeenNonces *deque.Deque[string] `json:"sn"`
-	KeyCache   map[string]string    `json:"kc"`
+	Suite           SuiteConfig          `json:"s"`
+	PrivKey         []byte               `json:"priv"`
+	PubKey          []byte               `json:"pub"`
+	IdentityPubKey  []byte               `json:"idpub"`
+	IdentityPrivKey ed25519.PrivateKey   `json:"-"`
+	SeenNonces      *deque.Deque[string] `json:"sn"`
+	KeyCache        map[string]string    `json:"kc"`
 }
 
 // Stores major parts of the user's information

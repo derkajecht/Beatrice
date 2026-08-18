@@ -23,6 +23,13 @@ type ChallengePacket struct {
 	IsNew       bool   `json:"new"`
 }
 
+// ChallengeResponse is the client's reply to a ChallengePacket: the nonce
+// signed with the client's identity (ed25519) private key.
+type ChallengeResponse struct {
+	Signature []byte `json:"sig"`
+	Nonce     string `json:"n"`
+}
+
 type MessagePacket struct {
 	Recipient string `json:"r"`
 	Sender    string `json:"s"`

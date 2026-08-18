@@ -3,8 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 
-server
-client
+/server
+/client
 
 # C extensions
 *.so
@@ -213,6 +213,9 @@ __marimo__/
 /beatrice-client
 /beatrice-server
 /dist/
+
+# Local data (db + identity keys)
+.beatrice/
 
 # wtp
 .wtp.yml

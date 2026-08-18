@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -73,7 +74,7 @@ func (u *User) NewChatClient(ctx context.Context) {
 				conn.SetReadLimit(1 << 20) // 1 MiB
 
 				// send handshake to server
-				err = u.SendPacketToServer("h", shared.HandshakePacket{Nickname: u.Nickname, PubKey: u.Crypto.PubKey})
+				err = u.SendPacketToServer("h", shared.HandshakePacket{Nickname: u.Nickname, PubKey: u.Crypto.IdentityPubKey})
 				if err != nil {
 					slog.Error("failed to send handshake", "err", err)
 				}
@@ -115,6 +116,24 @@ func (u *User) readLoop(ctx context.Context) {
 			continue
 		}
 		slog.Debug("packet successfully unmarshalled", "packet", packet)
+
+		// Handle challenge-response auth: sign the nonce with our identity key.
+		if packet.Type == "c" {
+			var cp shared.ChallengePacket
+			if err := json.Unmarshal(packet.Message, &cp); err != nil {
+				slog.Error("failed to unmarshal ChallengePacket", "err", err)
+				continue
+			}
+			// sign the nonce with our identity key
+			sig := ed25519.Sign(u.Crypto.IdentityPrivKey, []byte(cp.PendingAuth))
+			// create response packet with the signature
+			// send original nonce and signature back to server
+			resp := shared.ChallengeResponse{Signature: sig, Nonce: cp.PendingAuth}
+			if err := u.SendPacketToServer("c", resp); err != nil {
+				slog.Error("failed to send challenge response", "err", err)
+			}
+			continue // challenge handled here, don't forward to the TUI
+		}
 
 		select {
 		case <-ctx.Done():

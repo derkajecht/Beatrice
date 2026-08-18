@@ -59,6 +59,13 @@ func (h *Hub) Listener(ctx context.Context) {
 						Message: "err_handshake_failed",
 					})
 				}
+			case "c":
+				if err := HandleChallenge(h, msg.conn, packet); err != nil {
+					slog.Error("error handling challenge", "err", err)
+					_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
+						Message: "err_challenge_failed",
+					})
+				}
 			case "m":
 				if err := HandleMessage(h, msg.conn, packet); err != nil {
 					slog.Error("error handling message", "err", err)
@@ -90,10 +97,7 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 
 	// keepalive: ping the client at InactivityTimeout/3 intervals
 	go func() {
-		interval := h.InactivityTimeout / 3
-		if interval < time.Second {
-			interval = time.Second
-		}
+		interval := max(h.InactivityTimeout/3, time.Second)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -113,6 +117,7 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 		}
 	}()
 
+	// read messages from the client synchronously
 	for {
 		readCtx, cancel := context.WithTimeout(ctx, h.InactivityTimeout)
 		var m json.RawMessage
