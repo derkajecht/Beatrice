@@ -2,12 +2,35 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/derkajecht/Beatrice/src/shared"
 )
+
+func shortHash(pk []byte) string {
+	hasher := sha256.New()
+	hasher.Write(pk)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	return hash
+}
+
+func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
+	challenge := shared.ChallengePacket{
+		Nickname:    c.Nickname,
+		PendingAuth: nonce,
+		PubKey:      c.PubKey,
+		IsNew:       false,
+	}
+	if err := SendPacketToClient(c, "c", challenge); err != nil {
+		return fmt.Errorf("failed to send challenge: %w", err)
+	}
+	return nil
+}
 
 // HandleHandshake receives the handshake packet from the client
 // validates username and public key, and saves the client to the hub
@@ -18,13 +41,13 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		return fmt.Errorf("malformed handshake: %w", err)
 	}
 
-	// Nickname validation
+	// Nickname validation and duplicate check
 	nickname := strings.TrimSpace(UsernameSanitizer(hs.Nickname))
 	if len(nickname) < 3 {
 		return fmt.Errorf("nickname too short")
 	}
 
-	storedPubKey, exists, err := h.db.GetUser(nickname)
+	storedPubKey, exists, err := h.db.GetUserPK(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to look up user: %w", err)
 	}
@@ -32,8 +55,8 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	c.Nickname = nickname
 	c.PubKey = hs.PubKey
 
-	// New user: trust on first use — register and complete the handshake.
 	if !exists {
+		// TOFU register
 		if err := h.db.StoreUser(nickname, hs.PubKey); err != nil {
 			return fmt.Errorf("failed to store user: %w", err)
 		}
@@ -41,26 +64,49 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		return completeHandshake(h, c) // sends dir packet to user and broadcasts join packet to all other active users
 	}
 
-	// Returning user: must prove ownership of the stored public key.
-	if !bytes.Equal(storedPubKey, hs.PubKey) {
-		return fmt.Errorf("public key mismatch for existing user %q", nickname)
+	// returning user
+	if bytes.Equal(storedPubKey, hs.PubKey) {
+		nonce, err := h.nonces.Issue()
+		// challenge flow
+		if err != nil {
+			return fmt.Errorf("failed to issue challenge nonce: %w", err)
+		}
+		if err := c.SendChallenge(h, nonce); err != nil {
+			return fmt.Errorf("failed to send challenge: %w", err)
+		}
+		return nil
 	}
 
+	cand := nickname + "-" + shortHash(hs.PubKey)
+	cpk, cexists, err := h.db.GetUserPK(cand)
+	if err != nil {
+		return fmt.Errorf("failed to look up user: %w", err)
+	}
+
+	slog.Info("assigned suffix nickname", "original", nickname, "assigned", cand)
+	if cexists && !bytes.Equal(cpk, hs.PubKey) {
+		return fmt.Errorf("hash collision on %q", cand) // ~impossible
+	}
+
+	c.Nickname = cand
+	if err := SendPacketToClient(c, "n", shared.NicknameUpdatePacket{Nickname: cand}); err != nil {
+		return fmt.Errorf("failed to send nickname change packet: %w", err)
+	}
+
+	if !cexists {
+		// New user under suffixed name -> TOFU register and complete
+		if err := h.db.StoreUser(cand, hs.PubKey); err != nil {
+			return fmt.Errorf("failed to store user: %w", err)
+		}
+		c.Verified = true
+		return completeHandshake(h, c)
+	}
+	// Returning user under suffixed name -> prove ownership
 	nonce, err := h.nonces.Issue()
 	if err != nil {
 		return fmt.Errorf("failed to issue challenge nonce: %w", err)
 	}
-
-	challenge := shared.ChallengePacket{
-		Nickname:    nickname,
-		PendingAuth: nonce,
-		PubKey:      storedPubKey,
-		IsNew:       false,
-	}
-	if err := SendPacketToClient(c, "c", challenge); err != nil {
-		return fmt.Errorf("failed to send challenge: %w", err)
-	}
-	return nil // handshake pending until the challenge response is verified
+	return c.SendChallenge(h, nonce)
 }
 
 func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {

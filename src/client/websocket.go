@@ -117,6 +117,16 @@ func (u *User) readLoop(ctx context.Context) {
 		}
 		slog.Debug("packet successfully unmarshalled", "packet", packet)
 
+		if packet.Type == "n" {
+			var np shared.NicknameUpdatePacket
+			if err := json.Unmarshal(packet.Message, &np); err != nil {
+				slog.Error("failed to unmarshal NicknameUpdatePacket", "err", err)
+				continue
+			}
+			// update client side nickname with the
+			u.Nickname = np.Nickname
+		}
+
 		// Handle challenge-response auth: sign the nonce with our identity key.
 		if packet.Type == "c" {
 			var cp shared.ChallengePacket
@@ -179,7 +189,7 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 
 // StartClient establishes a connection to the server using the host and port provided.
 // It returns an error if the host or port is empty.
-func StartClient(host, port, nickname string) error {
+func StartClient(host, port, nickname, ephemeral string) error {
 
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
@@ -190,7 +200,8 @@ func StartClient(host, port, nickname string) error {
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
-	cryptoPkt, err := NewUserSession()
+	ephemeralBool := ephemeral != ""
+	cryptoPkt, err := NewUserSession(ephemeralBool)
 	if err != nil {
 		slog.Error("Error generating user session", "err", err)
 		return err
@@ -212,7 +223,10 @@ func StartClient(host, port, nickname string) error {
 	go user.NewChatClient(rootCtx) // non-blocking
 
 	logCh := LoggerSetup()
-	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh), tea.WithAltScreen())
+	send := func(mp shared.MessagePacket) error {
+		return user.SendPacketToServer("m", mp)
+	}
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}

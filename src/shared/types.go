@@ -11,6 +11,10 @@ type GeneralPacket struct {
 	Message json.RawMessage `json:"m"`
 }
 
+type NicknameUpdatePacket struct {
+	Nickname string `json:"n"`
+}
+
 type HandshakePacket struct {
 	Nickname string `json:"n"`
 	PubKey   []byte `json:"k"` // Base64 PEM Identity Key

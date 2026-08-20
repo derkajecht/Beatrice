@@ -9,11 +9,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 func UsernameSanitizer(username string) string {
@@ -27,18 +26,40 @@ func UsernameSanitizer(username string) string {
 	return username
 }
 
+const (
+	darwin  = iota // 0
+	linux          // 1
+	windows        // 2
+	unknown        // 3
+)
+
+// simple check for OS
+func checkOS() int {
+	switch os := runtime.GOOS; os {
+	case "darwin":
+		return darwin
+	case "linux":
+		return linux
+	case "windows":
+		return windows
+	default:
+		return unknown
+	}
+}
+
 // CreateLocation creates the target directory for the database depending on the OS
 func (cfg *DatabaseInfo) CreateLocation() error {
 	// store the OS type in j
-	j := shared.CheckOS()
+	j := checkOS()
 	// switch on the OS type and assign the appropriate location
+	homeDir, _ := os.UserHomeDir()
 	switch j {
-	case shared.Darwin:
-		cfg.Location = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Beatrice")
-	case shared.Linux:
-		cfg.Location = filepath.Join(os.Getenv("HOME"), ".beatrice")
-	case shared.Windows:
-		cfg.Location = filepath.Join(os.Getenv("APPDATA"), "Beatrice")
+	case darwin:
+		cfg.Location = filepath.Join(homeDir, "Library", "Application Support", "Beatrice")
+	case linux:
+		cfg.Location = filepath.Join(homeDir, ".beatrice")
+	case windows:
+		cfg.Location = filepath.Join(homeDir, ("APPDATA"), "Beatrice")
 	default:
 		return fmt.Errorf("unknown OS")
 	}

@@ -2,48 +2,115 @@ package tui
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 
-	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
+	tea2 "charm.land/bubbletea/v2"
+	lg2 "charm.land/lipgloss/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	// "github.com/charmbracelet/lipgloss"
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
-type keyMap struct {
-	Quit key.Binding
-}
-
-var keys = keyMap{
-	Quit: key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
-}
+// Composer constants.
+const (
+	composerPrompt  = " ❯ "
+	composerPromptW = 3 // visual cells of the prompt
+	headerHeight    = 1
+)
 
 type model struct {
 	packetCh <-chan shared.GeneralPacket
 	logCh    <-chan []byte
 
+	nickname string
+	send     func(shared.MessagePacket) error
+
 	viewport viewport.Model
 	sidebar  Section
 	chat     Section
 	header   Section
+	input    textinput.Model
 	tooSmall bool
 }
 
 type logMsg string
 type packetMsg shared.GeneralPacket
-type chatMsg string
 
-func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte) model {
+// chatMsg carries a single incoming or outgoing message. Own-ness (sent vs
+// received) is derived from the model's nickname when it is rendered.
+type chatMsg struct {
+	Sender  string
+	Content string
+}
+
+type nicknameMsg struct {
+	Nickname string
+}
+
+// scrollMsg scrolls the chat history. A negative value scrolls up.
+type scrollMsg int
+
+// chatResizeMsg re-flows the chat viewport when the terminal resizes.
+type chatResizeMsg struct {
+	width  int
+	height int
+}
+
+// NewModel builds the TUI model. nickname and send wire up the message
+// composer: on Enter, a shared.MessagePacket is built and handed to send.
+func NewModel(
+	packetCh <-chan shared.GeneralPacket,
+	logCh <-chan []byte,
+	nickname string,
+	send func(shared.MessagePacket) error,
+) model {
+	input := newComposer()
+	input.Focus()
 	return model{
 		packetCh: packetCh,
 		logCh:    logCh,
-		sidebar:  newSidebarModel(SidebarConfig{}),
-		chat:     newChatModel(ChatViewConfig{}),
-		header:   newHeaderModel(HeaderConfig{}),
+		nickname: nickname,
+		send:     send,
+		sidebar:  newSidebarModel(),
+		chat:     newChatModel(nickname),
+		header:   newHeaderModel(),
+		input:    input,
 	}
+}
+
+// newComposer builds a styled single-line message input.
+func newComposer() textinput.Model {
+	in := textinput.New()
+	in.Prompt = composerPrompt
+	in.Placeholder = "Type a message…"
+	in.CharLimit = 2000
+
+	styles := textinput.DefaultDarkStyles()
+	styles.Cursor.Blink = false
+	styles.Cursor.Color = lg2.Color("13")
+	styles.Focused.Prompt = lg2Style("13", true)
+	styles.Focused.Text = lg2Style("default", false)
+	styles.Focused.Placeholder = lg2Style("8", false)
+	styles.Blurred.Prompt = lg2Style("7", false)
+	styles.Blurred.Text = lg2Style("default", false)
+	styles.Blurred.Placeholder = lg2Style("8", false)
+	in.SetStyles(styles)
+	return in
+}
+
+// lg2Style builds a v2 lipgloss style for the bubbles v2 textinput, which uses
+// a different lipgloss version than the rest of the TUI.
+func lg2Style(hex string, bold bool) lg2.Style {
+	s := lg2.NewStyle().Foreground(lg2.Color(hex))
+	if bold {
+		s = s.Bold(true)
+	}
+	return s
 }
 
 func (m model) Init() tea.Cmd {
@@ -55,16 +122,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height)
-		m.viewport.GotoBottom()
+		m.tooSmall = msg.Width < 44 || msg.Height < 10
+		m = m.resize()
 		return m, nil
+
 	case tea.KeyMsg:
-		if key.Matches(msg, keys.Quit) {
-			return m, tea.Quit
-		}
+		return m.handleKey(msg)
+
 	case logMsg:
 		updated, _ := m.chat.Update(msg)
 		m.chat = updated
 		return m, waitForLog(m.logCh)
+
 	case packetMsg:
 		var cmd tea.Cmd
 		m, cmd = m.handlePacket(msg)
@@ -73,24 +142,131 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// resize re-flows the chat viewport and composer to the current terminal size.
+func (m model) resize() model {
+	_, chatCW, chatCH, _ := m.layout()
+	m.chat, _ = m.chat.Update(chatResizeMsg{width: chatCW, height: chatCH})
+	m.input.SetWidth(chatCW - composerPromptW)
+	return m
+}
+
+// handleKey routes key presses between the composer and chat scrolling.
+func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c always quits, whether or not the composer is focused.
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	if m.input.Focused() {
+		return m.handleComposerKey(msg)
+	}
+	return m.handleIdleKey(msg)
+}
+
+// handleComposerKey handles input while the composer is focused.
+func (m model) handleComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		return m.submit()
+	case "esc":
+		if m.input.Value() == "" {
+			m.input.Blur()
+			return m, nil
+		}
+		m.input.Reset()
+		return m, nil
+	}
+
+	var cmd tea2.Cmd
+	m.input, cmd = m.input.Update(toV2Key(msg))
+	_ = cmd // v2 cursor cmd; cursor is intentionally static
+	return m, nil
+}
+
+// handleIdleKey handles keys while the composer is blurred.
+func (m model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "esc", "enter":
+		m.input.Focus()
+		return m, nil
+	case "up":
+		m.chat, _ = m.chat.Update(scrollMsg(-1))
+		return m, nil
+	case "down":
+		m.chat, _ = m.chat.Update(scrollMsg(1))
+		return m, nil
+	case "pgup":
+		_, _, _, page := m.layout()
+		m.chat, _ = m.chat.Update(scrollMsg(-max(1, page/2)))
+		return m, nil
+	case "pgdown":
+		_, _, _, page := m.layout()
+		m.chat, _ = m.chat.Update(scrollMsg(max(1, page/2)))
+		return m, nil
+	}
+
+	// Any printable key re-focuses the composer and begins typing.
+	if msg.Type == tea.KeyRunes {
+		m.input.Focus()
+		var cmd tea2.Cmd
+		m.input, cmd = m.input.Update(toV2Key(msg))
+		_ = cmd
+	}
+	return m, nil
+}
+
+// submit sends the current composer value as a plaintext message.
+func (m model) submit() (tea.Model, tea.Cmd) {
+	content := strings.TrimSpace(m.input.Value())
+	if content == "" {
+		return m, nil
+	}
+
+	mp := shared.MessagePacket{Sender: m.nickname, Content: content}
+	if err := m.send(mp); err != nil {
+		slog.Error("failed to send message", "err", err)
+		if h, ok := m.header.(HeaderConfig); ok {
+			h.Status = "send failed: " + err.Error()
+			m.header = h
+		}
+		return m, nil // keep the text so the user can retry
+	}
+
+	m.input.Reset()
+	return m, nil
+}
+
 func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 	switch p.Type {
+	case "n":
+		var np shared.NicknameUpdatePacket
+		if err := json.Unmarshal(p.Message, &np); err != nil {
+			slog.Debug("failed to unmarshal NickPacket", "err", err)
+			return m, nil
+		}
+		m.nickname = np.Nickname
+		m.chat, _ = m.chat.Update(nicknameMsg{Nickname: np.Nickname})
+		return m, nil
 	case "d":
 		var dp shared.DirPacket
 		if err := json.Unmarshal(p.Message, &dp); err != nil {
 			slog.Debug("failed to unmarshal DirPacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.sidebar.Update(struct{ CurrentUsers map[string][]byte }{CurrentUsers: dp.CurrentUsers})
-		m.sidebar = s
-		return m, cmd
+		for k := range dp.CurrentUsers {
+			s, _ := m.sidebar.Update(k)
+			m.sidebar = s
+		}
+		return m, nil
 	case "j":
 		var jp shared.JoinPacket
 		if err := json.Unmarshal(p.Message, &jp); err != nil {
 			slog.Debug("failed to unmarshal JoinPacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.sidebar.Update(struct{ CurrentUsers map[string][]byte }{CurrentUsers: map[string][]byte{jp.Nickname: jp.PubKey}}) // don't show pub key in the sidebar
+		s, cmd := m.sidebar.Update(jp.Nickname)
 		m.sidebar = s
 		return m, cmd
 	case "m":
@@ -99,7 +275,7 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			slog.Debug("failed to unmarshal MessagePacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.chat.Update(chatMsg(fmt.Sprintf("%s: %s", mp.Sender, mp.Content)))
+		s, cmd := m.chat.Update(chatMsg{Sender: mp.Sender, Content: mp.Content})
 		m.chat = s
 		return m, cmd
 	case "e":
@@ -119,19 +295,161 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 	}
 }
 
-func (m model) View() string {
-	sidebarWidth := m.viewport.Width() / 5
-	bodyWidth := m.viewport.Width() - sidebarWidth - 2
-	bodyHeight := max(1, m.viewport.Height()-4)
+// layout returns (sidebarWidth, chatContentWidth, chatContentHeight, bodyHeight)
+// where the chat content dimensions are measured inside the chat panel border.
+func (m model) layout() (int, int, int, int) {
+	termW := m.viewport.Width()
+	termH := m.viewport.Height()
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.sidebar.View(sidebarWidth, bodyHeight, false),
-		m.chat.View(bodyWidth, bodyHeight, true),
-	)
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.header.View(m.viewport.Width(), 1, true),
-		body,
-	)
+	bodyH := termH - headerHeight
+
+	sidebarW := max(termW/5, 14)
+
+	if termW-sidebarW < 34 {
+		sidebarW = termW - 34
+	}
+	if sidebarW < 14 {
+		sidebarW = 14
+	}
+	if sidebarW > termW-2 {
+		sidebarW = termW - 2
+	}
+
+	chatW := termW - sidebarW
+	chatCW := chatW - 2 // left + right border
+
+	// Chat column: top border (1) + messages + divider (1) + composer (1) + bottom border (1).
+	chatCH := max(bodyH-4, 1)
+
+	return sidebarW, chatCW, chatCH, bodyH
+}
+
+func (m model) View() string {
+	// bubbletea renders View() before the first WindowSizeMsg, when the
+	// viewport dimensions are still 0. Bail out until we know the size.
+	if m.viewport.Width() <= 0 || m.viewport.Height() <= 0 {
+		return ""
+	}
+
+	if m.tooSmall {
+		msg := lipgloss.NewStyle().Foreground(mutedC).Render("Terminal too small — enlarge to chat.")
+		return lipgloss.Place(
+			m.viewport.Width(), m.viewport.Height(),
+			lipgloss.Center, lipgloss.Center,
+			msg,
+		)
+	}
+
+	sw, chatCW, chatCH, bodyH := m.layout()
+
+	header := m.header.View(m.viewport.Width(), headerHeight, true)
+	sidebar := m.sidebar.View(sw, bodyH, false)
+	messages := m.chat.View(chatCW, chatCH, true)
+
+	// Unified chat panel: messages share one border with the composer below.
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true, true, false, true).
+		BorderForeground(borderC).
+		Width(chatCW).
+		Height(chatCH).
+		Render(messages)
+
+	// divider := lipgloss.NewStyle().
+	// 	Width(chatCW).
+	// 	Foreground(borderC).
+	// 	Render("├" + strings.Repeat("─", chatCW-2) + "┤")
+
+	composer := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true, true, true, true).
+		BorderForeground(m.composerBorderC()).
+		Width(chatCW).
+		Height(1).
+		Render(m.input.View())
+
+	chatColumn := lipgloss.JoinVertical(lipgloss.Left, panel, composer)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, chatColumn)
+
+	return lipgloss.JoinVertical(lipgloss.Left, body, header)
+}
+
+// composerBorderC highlights the composer's border while it has focus, a small
+// affordance that signals "you can type here".
+func (m model) composerBorderC() lipgloss.TerminalColor {
+	if m.input.Focused() {
+		return borderHi
+	}
+	return borderC
+}
+
+// toV2Key bridges a bubbletea v1 KeyMsg to the bubbles v2 KeyPressMsg that the
+// textinput component expects. The two libraries use different tea types.
+func toV2Key(k tea.KeyMsg) tea2.KeyPressMsg {
+	var out tea2.KeyPressMsg
+
+	if k.Type == tea.KeyRunes {
+		if len(k.Runes) == 0 {
+			return out
+		}
+		if k.Alt {
+			// Alt + rune is a chord (e.g. alt+d); keep Text empty so the key
+			// renders as "alt+d" and can match modifier-aware bindings.
+			out.Code = k.Runes[0]
+			out.Mod |= tea2.ModAlt
+			return out
+		}
+		out.Text = string(k.Runes)
+		out.Code = k.Runes[0]
+		return out
+	}
+
+	switch k.Type {
+	case tea.KeyEnter:
+		out.Code = tea2.KeyEnter
+	case tea.KeyBackspace:
+		out.Code = tea2.KeyBackspace
+	case tea.KeyTab:
+		out.Code = tea2.KeyTab
+	case tea.KeyEsc:
+		out.Code = tea2.KeyEsc
+	case tea.KeyDelete:
+		out.Code = tea2.KeyDelete
+	case tea.KeyInsert:
+		out.Code = tea2.KeyInsert
+	case tea.KeySpace:
+		out.Text = " "
+		out.Code = tea2.KeySpace
+	case tea.KeyUp:
+		out.Code = tea2.KeyUp
+	case tea.KeyDown:
+		out.Code = tea2.KeyDown
+	case tea.KeyRight:
+		out.Code = tea2.KeyRight
+	case tea.KeyLeft:
+		out.Code = tea2.KeyLeft
+	case tea.KeyHome:
+		out.Code = tea2.KeyHome
+	case tea.KeyEnd:
+		out.Code = tea2.KeyEnd
+	case tea.KeyPgUp:
+		out.Code = tea2.KeyPgUp
+	case tea.KeyPgDown:
+		out.Code = tea2.KeyPgDown
+	case tea.KeyShiftTab:
+		out.Code = tea2.KeyTab
+		out.Mod |= tea2.ModShift
+	default:
+		if k.Type >= tea.KeyCtrlA && k.Type <= tea.KeyCtrlZ {
+			out.Code = rune('a') + rune(k.Type-tea.KeyCtrlA)
+			out.Mod |= tea2.ModCtrl
+		} else {
+			out.Text = k.String()
+		}
+	}
+
+	if k.Alt {
+		out.Mod |= tea2.ModAlt
+	}
+	return out
 }
 
 func waitForLog(logCh <-chan []byte) tea.Cmd {

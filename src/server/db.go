@@ -29,9 +29,16 @@ func NewDatabase(dbName, dbLocation string) (*DatabaseInfo, error) {
 				return nil, fmt.Errorf("failed to expand home directory: %w", err)
 			}
 			cfg.Location = home + cfg.Location[1:]
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("failed to expand home directory: %w", err)
+			}
+			cfg.Location = home + "/" + cfg.Location
 		}
 	} else {
-		if err := cfg.CreateLocation(); err != nil {
+		err := cfg.CreateLocation()
+		if err != nil {
 			return nil, fmt.Errorf("failed to create default location: %w", err)
 		}
 	}
@@ -89,8 +96,8 @@ func (cfg *DatabaseInfo) StoreUser(nickname string, pubKey []byte) error {
 	return nil
 }
 
-// GetUser returns the stored public key for a nickname and whether the user exists.
-func (cfg *DatabaseInfo) GetUser(nickname string) ([]byte, bool, error) {
+// GetUserPK returns the stored public key for a nickname and whether the user exists.
+func (cfg *DatabaseInfo) GetUserPK(nickname string) ([]byte, bool, error) {
 	var pubKey []byte
 	err := cfg.DB.QueryRow("SELECT public_key FROM users WHERE nickname = ?", nickname).Scan(&pubKey)
 	if err == sql.ErrNoRows {

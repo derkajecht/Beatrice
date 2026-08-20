@@ -179,6 +179,7 @@ func StartServer(host, port, dbName, dbLocation string) {
 	// start the listener goroutine
 	go hub.Listener(ctx)
 
+	// create and configure the HTTP mux
 	mux := NewServerHandler(ctx, hub)
 
 	addr := fmt.Sprintf("%s:%s", host, port)

@@ -97,7 +97,7 @@ func loadOrCreateIdentityKey() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 
 // NewUserSession returns a new ephemeral key pair, an ed25519 identity key pair,
 // and a session. Returns an error on failure to generate either key pair.
-func NewUserSession() (*CryptoPacket, error) {
+func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
 	suite := NewCryptoSuite()
 
 	// generate private key using the crypto suite
@@ -118,9 +118,15 @@ func NewUserSession() (*CryptoPacket, error) {
 
 	// ed25519 identity key used to sign challenge responses (and later messages).
 	// Persisted to disk so returning users present the same key on rejoin.
-	idPub, idPriv, err := loadOrCreateIdentityKey()
-	if err != nil {
-		return nil, err
+	var idPub ed25519.PublicKey
+	var idPriv ed25519.PrivateKey
+	if ephemeral {
+		idPub, idPriv, err = ed25519.GenerateKey(rand.Reader)
+	} else {
+		idPub, idPriv, err = loadOrCreateIdentityKey()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// create a new crypto packet with the generated key pairs
