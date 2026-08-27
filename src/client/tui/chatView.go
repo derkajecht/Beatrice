@@ -11,9 +11,10 @@ import (
 // chatMessage is a single rendered entry in the chat log: a user message or a
 // system line (logs).
 type chatMessage struct {
-	sender  string
-	content string
-	system  bool
+	sender   string
+	content  string
+	system   bool
+	leaveMsg bool
 }
 
 type ChatViewConfig struct {
@@ -42,6 +43,10 @@ func (m ChatViewConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 
 	case chatMsg:
 		m.messages = append(m.messages, chatMessage{sender: msg.Sender, content: msg.Content})
+		m.rebuild()
+
+	case leaveMsg:
+		m.messages = append(m.messages, chatMessage{sender: msg.Nickname, content: msg.Content, leaveMsg: true})
 		m.rebuild()
 
 	case nicknameMsg:
@@ -77,6 +82,10 @@ func (m *ChatViewConfig) rebuild() {
 	for _, msg := range m.messages {
 		if msg.system {
 			lines = append(lines, renderSystemLine(msg.content, contentW))
+			continue
+		}
+		if msg.leaveMsg {
+			lines = append(lines, renderLeavePacket(msg.sender, msg.content, contentW))
 			continue
 		}
 		lines = append(lines, renderMessage(msg, m.nickname, contentW)...)
@@ -246,6 +255,11 @@ func rightBlock(block string, width int) []string {
 
 func renderSystemLine(content string, width int) string {
 	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("· " + content)
+	return lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
+}
+
+func renderLeavePacket(sender, content string, width int) string {
+	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render(sender + " " + content)
 	return lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
 }
 

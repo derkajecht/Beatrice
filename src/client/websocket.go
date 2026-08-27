@@ -27,7 +27,7 @@ func (u *User) ConnectWithRetry(ctx context.Context, retryCount int) (*websocket
 			return conn, nil
 		}
 
-		// 	log the error and increment the retry count
+		// log the error and increment the retry count
 		slog.Error("Error connecting to server", "err", err, "retry", i+1)
 		lastErr = err
 
@@ -45,7 +45,6 @@ func (u *User) ConnectWithRetry(ctx context.Context, retryCount int) (*websocket
 
 // NewChatClient establishes a connection to the server using the host and port provided.
 func (u *User) NewChatClient(ctx context.Context) {
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -54,7 +53,6 @@ func (u *User) NewChatClient(ctx context.Context) {
 
 		default:
 			func() {
-
 				dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
 				defer dialCancel()
 
@@ -73,8 +71,13 @@ func (u *User) NewChatClient(ctx context.Context) {
 
 				conn.SetReadLimit(1 << 20) // 1 MiB
 
-				// send handshake to server
-				err = u.SendPacketToServer("h", shared.HandshakePacket{Nickname: u.Nickname, PubKey: u.Crypto.IdentityPubKey})
+				// send handshake to server: identity key for auth/TOFU plus
+				// the HPKE public key users will use to encrypt messages to us
+				err = u.SendPacketToServer("h", shared.HandshakePacket{
+					Nickname:   u.Nickname,
+					PubKey:     u.Crypto.IdentityPubKey,
+					HPKEPubKey: u.Crypto.PubKey,
+				})
 				if err != nil {
 					slog.Error("failed to send handshake", "err", err)
 				}
@@ -97,7 +100,6 @@ func (u *User) NewChatClient(ctx context.Context) {
 }
 
 func (u *User) readLoop(ctx context.Context) {
-
 	for {
 		u.mu.RLock()
 		conn := u.Conn
@@ -145,6 +147,54 @@ func (u *User) readLoop(ctx context.Context) {
 			continue // challenge handled here, don't forward to the TUI
 		}
 
+		// Keep the local connected-users directory in sync before anything
+		// is forwarded to the TUI, so outbound fan-out can encrypt per user.
+		// Updates come from server-authoritative d/j/l packets only; the
+		// key fields carry HPKE public keys.
+		switch packet.Type {
+		case "d":
+			var dp shared.DirPacket
+			if err := json.Unmarshal(packet.Message, &dp); err != nil {
+				slog.Error("failed to unmarshal DirPacket", "err", err)
+				continue
+			}
+			u.ApplyDirPacket(dp.CurrentUsers)
+		case "j":
+			var jp shared.JoinPacket
+			if err := json.Unmarshal(packet.Message, &jp); err != nil {
+				slog.Error("failed to unmarshal JoinPacket", "err", err)
+				continue
+			}
+			u.ApplyJoin(jp.Nickname, jp.PubKey)
+		case "l":
+			var lp shared.LeavePacket
+			if err := json.Unmarshal(packet.Message, &lp); err != nil {
+				slog.Error("failed to unmarshal LeavePacket", "err", err)
+				continue
+			}
+			u.ApplyLeave(lp.Nickname)
+		case "m":
+			// Receive-side decryption: open the HPKE payload locally and
+			// forward a plaintext DecryptedMessage to the TUI. Failures are
+			// dropped and logged; the server never sees or handles plaintext.
+			var mp shared.MessagePacket
+			if err := json.Unmarshal(packet.Message, &mp); err != nil {
+				slog.Error("failed to unmarshal MessagePacket", "err", err)
+				continue
+			}
+			plaintext, err := DecryptMessage(u, mp.Enc, mp.CT, mp.Sender, mp.Recipient)
+			if err != nil {
+				slog.Error("dropping undecryptable message", "sender", mp.Sender, "recipient", mp.Recipient, "err", err)
+				continue
+			}
+			local, err := json.Marshal(shared.DecryptedMessage{Sender: mp.Sender, Content: plaintext})
+			if err != nil {
+				slog.Error("failed to marshal decrypted message", "err", err)
+				continue
+			}
+			packet.Message = local
+		}
+
 		select {
 		case <-ctx.Done():
 			slog.Info("Shutting down read loop")
@@ -158,10 +208,9 @@ func (u *User) readLoop(ctx context.Context) {
 	}
 }
 
-// SendPacketToClient sends a packet or message to the client
+// SendPacketToServer sends a packet or message to the client
 // and returns an error if any
 func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
-
 	u.mu.RLock()
 	conn := u.Conn
 	u.mu.RUnlock()
@@ -187,10 +236,63 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 	return wsjson.Write(writeCtx, conn, envelope)
 }
 
+// SendMessageToPeers encrypts content for every currently connected user
+// (excluding self) and sends one MessagePacket per recipient. With no other
+// users connected it returns an error so the TUI can surface it. Partial
+// encryption failures still deliver to reachable recipients; an error is only
+// returned when nothing could be encrypted or no send succeeded.
+func (u *User) BroadcastMessage(content string) error {
+	users := u.GetConnectedUserInfo()
+	targets := make([]string, 0, len(users))
+	for nickname := range users {
+		if nickname == u.Nickname {
+			continue
+		}
+		targets = append(targets, nickname)
+	}
+	if len(targets) == 0 {
+		return fmt.Errorf("no other users connected")
+	}
+
+	encrypted, encErr := EncryptMessage(u, targets, content)
+	if len(encrypted) == 0 {
+		if encErr == nil {
+			encErr = fmt.Errorf("no recipients could be encrypted")
+		}
+		return encErr
+	}
+	if encErr != nil {
+		slog.Warn("partial encryption failure, sending to reachable recipients only", "err", encErr)
+	}
+
+	sentOK := 0
+	var firstErr error
+	for _, t := range encrypted {
+		wire := shared.MessagePacket{
+			Recipient: t.Nickname,
+			Sender:    u.Nickname,
+			Enc:       t.Enc,
+			CT:        t.CT,
+		}
+		if err := u.SendPacketToServer("m", wire); err != nil {
+			slog.Error("failed to send message", "recipient", t.Nickname, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		sentOK++
+	}
+
+	if sentOK == 0 && firstErr != nil {
+		return firstErr
+	}
+	return nil
+}
+
 // StartClient establishes a connection to the server using the host and port provided.
 // It returns an error if the host or port is empty.
 func StartClient(host, port, nickname, ephemeral string) error {
-
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
 		slog.Warn("No host or port provided: Defaulting to localhost:8080")
@@ -223,8 +325,8 @@ func StartClient(host, port, nickname, ephemeral string) error {
 	go user.NewChatClient(rootCtx) // non-blocking
 
 	logCh := LoggerSetup()
-	send := func(mp shared.MessagePacket) error {
-		return user.SendPacketToServer("m", mp)
+	send := func(content string) error {
+		return user.BroadcastMessage(content)
 	}
 	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {

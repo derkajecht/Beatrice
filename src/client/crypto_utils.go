@@ -5,15 +5,22 @@ package client
 
 import (
 	"crypto/ed25519"
+	"crypto/hpke"
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-
-	"crypto/hpke"
+	"strings"
 
 	"github.com/derkajecht/Beatrice/src/shared"
 )
+
+type EncryptedTarget struct {
+	Nickname string
+	Enc      []byte
+	CT       []byte
+}
 
 // NewCryptoSuite returns a new crypto suite with the default settings.
 func NewCryptoSuite() SuiteConfig {
@@ -86,10 +93,10 @@ func loadOrCreateIdentityKey() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("failed to generate identity key: %w", err)
 	}
 	// create dir based on path and write the private key to disk
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("failed to create identity key dir: %w", err)
 	}
-	if err := os.WriteFile(path, priv, 0600); err != nil {
+	if err := os.WriteFile(path, priv, 0o600); err != nil {
 		return nil, nil, fmt.Errorf("failed to save identity key: %w", err)
 	}
 	return pub, priv, nil
@@ -131,4 +138,87 @@ func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
 
 	// create a new crypto packet with the generated key pairs
 	return NewCryptoPacket(suite, privBytes, pubBytes, idPub, idPriv), nil
+}
+
+// EncryptMessage encrypts content for each target nickname using that user's
+// stored HPKE public key from the local connected-users directory. It returns
+// one EncryptedTarget per successfully encrypted recipient. Targets that are
+// unknown or fail to encrypt are logged and reported in the returned error;
+// the successful subset is still returned so callers can deliver to reachable
+// recipients. The sender's own nickname is always skipped.
+func EncryptMessage(u *User, targets []string, content string) ([]EncryptedTarget, error) {
+	suite := u.Crypto.Suite
+	users := u.GetConnectedUserInfo()
+
+	out := make([]EncryptedTarget, 0, len(targets))
+	var failed []string
+
+	for _, target := range targets {
+		if target == u.Nickname {
+			continue // never encrypt to self
+		}
+		pubBytes, ok := users[target]
+		if !ok || len(pubBytes) == 0 {
+			slog.Error("no public key for target", "user", target)
+			failed = append(failed, target)
+			continue
+		}
+
+		pub, err := suite.KEM.NewPublicKey(pubBytes)
+		if err != nil {
+			slog.Error("failed to parse public key", "user", target, "err", err)
+			failed = append(failed, target)
+			continue
+		}
+
+		enc, sender, err := hpke.NewSender(pub, suite.KDF, suite.AEAD, suite.Info)
+		if err != nil {
+			slog.Error("failed to create HPKE sender", "user", target, "err", err)
+			failed = append(failed, target)
+			continue
+		}
+
+		// AAD binds the ciphertext to the authenticated sender/recipient pair;
+		// metadata tampering in transit causes Open to fail on the receiver.
+		ct, err := sender.Seal(shared.MessageAAD(u.Nickname, target), []byte(content))
+		if err != nil {
+			slog.Error("failed to seal message", "user", target, "err", err)
+			failed = append(failed, target)
+			continue
+		}
+
+		out = append(out, EncryptedTarget{Nickname: target, Enc: enc, CT: ct})
+	}
+
+	if len(failed) > 0 {
+		return out, fmt.Errorf("failed to encrypt for: %s", strings.Join(failed, ", "))
+	}
+	return out, nil
+}
+
+// DecryptMessage opens an inbound HPKE message addressed to this user using
+// the user's own reconstructed private key. sender/recipient must be the
+// authoritative names from the routed packet; they are bound as AAD and must
+// match what the sender sealed. The server never sees plaintext.
+func DecryptMessage(u *User, enc, ct []byte, sender, recipient string) (string, error) {
+	if len(enc) == 0 || len(ct) == 0 {
+		return "", fmt.Errorf("message missing enc or ct. both needed for successful decryption")
+	}
+
+	priv, err := u.OwnPrivateKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to reconstruct own private key: %w", err)
+	}
+
+	suite := u.Crypto.Suite
+	r, err := hpke.NewRecipient(enc, priv, suite.KDF, suite.AEAD, suite.Info)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HPKE recipient: %w", err)
+	}
+
+	pt, err := r.Open(shared.MessageAAD(sender, recipient), ct)
+	if err != nil {
+		return "", fmt.Errorf("failed to open ciphertext: %w", err)
+	}
+	return string(pt), nil
 }

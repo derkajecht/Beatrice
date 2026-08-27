@@ -54,6 +54,7 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 
 	c.Nickname = nickname
 	c.PubKey = hs.PubKey
+	c.HPKEPubKey = hs.HPKEPubKey
 
 	if !exists {
 		// TOFU register
@@ -125,6 +126,8 @@ func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 
 // completeHandshake finishes a successful handshake: sends the directory packet
 // and broadcasts the join event. Shared by new users and verified returning users.
+// The directory and join packets carry HPKE public keys (not ed25519 identity
+// keys) so peers can encrypt messages to each other.
 func completeHandshake(h *Hub, c *ServerClient) error {
 	dirPacket := shared.DirPacket{
 		CurrentUsers: make(map[string][]byte),
@@ -132,48 +135,81 @@ func completeHandshake(h *Hub, c *ServerClient) error {
 
 	h.mu.RLock()
 	for _, client := range h.clients {
-		dirPacket.CurrentUsers[client.Nickname] = client.PubKey
+		dirPacket.CurrentUsers[client.Nickname] = client.HPKEPubKey
 	}
 	h.mu.RUnlock()
 
 	if err := SendPacketToClient(c, "d", dirPacket); err != nil {
 		return fmt.Errorf("failed to send directory: %w", err)
 	}
-	h.Broadcast("j", shared.JoinPacket{Nickname: c.Nickname, PubKey: c.PubKey})
+	h.Broadcast("j", shared.JoinPacket{Nickname: c.Nickname, PubKey: c.HPKEPubKey})
 	return nil
 }
 
-// HandleMessage handles incoming message packets
+// HandleMessage handles incoming message packets. Messages are encrypted
+// per recipient by the sender, so they are routed unicast to the named
+// recipient only — never broadcast. The server cannot decrypt them. Both the
+// sender and the target must be verified connections; the wire sender field is
+// overwritten with the connection's authenticated nickname.
 func HandleMessage(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	var mp shared.MessagePacket
 	if err := json.Unmarshal(p.Message, &mp); err != nil {
 		return fmt.Errorf("malformed message: %w", err)
 	}
-	// reject messages without a sender - the sender must come from the client
-	// itself, never substitute the connection's nickname
-	if mp.Sender == "" {
-		return fmt.Errorf("message without sender rejected")
+	// only authenticated clients may send messages
+	if !c.Verified || c.Nickname == "" {
+		slog.Warn("message from unverified connection rejected", "client", c.ID)
+		if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_unverified_sender"}); err != nil {
+			return fmt.Errorf("failed to send unverified-sender error: %w", err)
+		}
+		return nil
 	}
-	h.Broadcast("m", mp)
+
+	// unicast requires an explicit recipient
+	if mp.Recipient == "" {
+		slog.Warn("message without recipient rejected", "sender", c.Nickname)
+		if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_missing_recipient"}); err != nil {
+			return fmt.Errorf("failed to send missing-recipient error: %w", err)
+		}
+		return nil
+	}
+
+	target := h.getClientByNickname(mp.Recipient)
+	if target == nil || !target.Verified {
+		slog.Warn("message for unknown recipient", "sender", c.Nickname, "recipient", mp.Recipient)
+		if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_unknown_recipient"}); err != nil {
+			return fmt.Errorf("failed to send unknown-recipient error: %w", err)
+		}
+		return nil
+	}
+
+	// the sender is bound to the authenticated connection, never trusted
+	// from the wire; recipients verify AAD against these authoritative names.
+	mp.Sender = c.Nickname
+
+	if err := SendPacketToClient(target, "m", mp); err != nil {
+		return fmt.Errorf("failed to deliver message to %q: %w", mp.Recipient, err)
+	}
 	return nil
 }
 
-// HandleJoin handles join requests
+// HandleJoin rejects client-originated join announcements. The directory is
+// server-authoritative: joins are only emitted by completeHandshake after a
+// verified handshake, so clients cannot poison peers' HPKE key directories.
 func HandleJoin(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
-	var jp shared.JoinPacket
-	if err := json.Unmarshal(p.Message, &jp); err != nil {
-		return fmt.Errorf("malformed join: %w", err)
+	slog.Warn("rejected client-originated join announcement", "client", c.ID, "nickname", c.Nickname)
+	if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_server_authoritative_directory"}); err != nil {
+		return fmt.Errorf("failed to send join-rejection error: %w", err)
 	}
-	h.Broadcast("j", jp)
 	return nil
 }
 
-// HandleLeave handles leave requests
+// HandleLeave rejects client-originated leave announcements. Leave packets are
+// emitted by the server itself when a verified connection drops.
 func HandleLeave(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
-	var lp shared.LeavePacket
-	if err := json.Unmarshal(p.Message, &lp); err != nil {
-		return fmt.Errorf("malformed leave: %w", err)
+	slog.Warn("rejected client-originated leave announcement", "client", c.ID, "nickname", c.Nickname)
+	if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_server_authoritative_directory"}); err != nil {
+		return fmt.Errorf("failed to send leave-rejection error: %w", err)
 	}
-	h.Broadcast("l", lp)
 	return nil
 }

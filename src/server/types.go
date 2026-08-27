@@ -11,13 +11,14 @@ import (
 // Server Memory Tracking Models
 // -------------------------------------------------------------------
 
-// Client represents a fully authenticated server-side active connection tracking state
+// ServerClient represents a fully authenticated server-side active connection tracking state
 type ServerClient struct {
-	ID       string
-	Conn     *websocket.Conn
-	Nickname string
-	PubKey   []byte
-	Verified bool
+	ID         string
+	Conn       *websocket.Conn
+	Nickname   string
+	PubKey     []byte // ed25519 identity public key (DB/TOFU + challenge verification)
+	HPKEPubKey []byte // HPKE KEM public key, distributed to peers via Dir/Join packets
+	Verified   bool
 }
 
 func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {

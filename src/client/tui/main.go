@@ -1,3 +1,4 @@
+// Package tui
 package tui
 
 import (
@@ -8,7 +9,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea2 "charm.land/bubbletea/v2"
-	lg2 "charm.land/lipgloss/v2"
+	lg "charm.land/lipgloss/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -28,7 +29,7 @@ type model struct {
 	logCh    <-chan []byte
 
 	nickname string
-	send     func(shared.MessagePacket) error
+	send     func(content string) error
 
 	viewport viewport.Model
 	sidebar  Section
@@ -38,14 +39,21 @@ type model struct {
 	tooSmall bool
 }
 
-type logMsg string
-type packetMsg shared.GeneralPacket
+type (
+	logMsg    string
+	packetMsg shared.GeneralPacket
+)
 
 // chatMsg carries a single incoming or outgoing message. Own-ness (sent vs
 // received) is derived from the model's nickname when it is rendered.
 type chatMsg struct {
 	Sender  string
 	Content string
+}
+
+type leaveMsg struct {
+	Nickname string
+	Content  string
 }
 
 type nicknameMsg struct {
@@ -62,13 +70,9 @@ type chatResizeMsg struct {
 }
 
 // NewModel builds the TUI model. nickname and send wire up the message
-// composer: on Enter, a shared.MessagePacket is built and handed to send.
-func NewModel(
-	packetCh <-chan shared.GeneralPacket,
-	logCh <-chan []byte,
-	nickname string,
-	send func(shared.MessagePacket) error,
-) model {
+// composer: on Enter, the composer text is handed to send as plaintext; the
+// client backend handles encryption and per-recipient fan-out.
+func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error) model {
 	input := newComposer()
 	input.Focus()
 	return model{
@@ -90,23 +94,24 @@ func newComposer() textinput.Model {
 	in.Placeholder = "Type a message…"
 	in.CharLimit = 2000
 
+	// TODO: make colours user configurable. Default to false
 	styles := textinput.DefaultDarkStyles()
-	styles.Cursor.Blink = false
-	styles.Cursor.Color = lg2.Color("13")
-	styles.Focused.Prompt = lg2Style("13", true)
-	styles.Focused.Text = lg2Style("default", false)
-	styles.Focused.Placeholder = lg2Style("8", false)
-	styles.Blurred.Prompt = lg2Style("7", false)
-	styles.Blurred.Text = lg2Style("default", false)
-	styles.Blurred.Placeholder = lg2Style("8", false)
+	styles.Cursor.Blink = true
+	styles.Cursor.Color = lg.Color("13")
+	styles.Focused.Prompt = lgStyle("13", true)
+	styles.Focused.Text = lgStyle("default", false)
+	styles.Focused.Placeholder = lgStyle("8", false)
+	styles.Blurred.Prompt = lgStyle("7", false)
+	styles.Blurred.Text = lgStyle("default", false)
+	styles.Blurred.Placeholder = lgStyle("8", false)
 	in.SetStyles(styles)
 	return in
 }
 
-// lg2Style builds a v2 lipgloss style for the bubbles v2 textinput, which uses
+// lgStyle builds a v2 lipgloss style for the bubbles v2 textinput, which uses
 // a different lipgloss version than the rest of the TUI.
-func lg2Style(hex string, bold bool) lg2.Style {
-	s := lg2.NewStyle().Foreground(lg2.Color(hex))
+func lgStyle(hex string, bold bool) lg.Style {
+	s := lg.NewStyle().Foreground(lg.Color(hex))
 	if bold {
 		s = s.Bold(true)
 	}
@@ -219,13 +224,14 @@ func (m model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // submit sends the current composer value as a plaintext message.
 func (m model) submit() (tea.Model, tea.Cmd) {
-	content := strings.TrimSpace(m.input.Value())
-	if content == "" {
+	rawContent := strings.TrimSpace(m.input.Value())
+	if rawContent == "" {
 		return m, nil
 	}
 
-	mp := shared.MessagePacket{Sender: m.nickname, Content: content}
-	if err := m.send(mp); err != nil {
+	// Plaintext is handed to the client backend, which encrypts and fans out
+	// one MessagePacket per recipient. It is never serialized onto the wire.
+	if err := m.send(rawContent); err != nil {
 		slog.Error("failed to send message", "err", err)
 		if h, ok := m.header.(HeaderConfig); ok {
 			h.Status = "send failed: " + err.Error()
@@ -235,6 +241,10 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	}
 
 	m.input.Reset()
+
+	// Local echo: show the sender's own plaintext once, locally only.
+	s, _ := m.chat.Update(chatMsg{Sender: m.nickname, Content: rawContent})
+	m.chat = s
 	return m, nil
 }
 
@@ -260,6 +270,15 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			m.sidebar = s
 		}
 		return m, nil
+	case "l":
+		var lp shared.LeavePacket
+		if err := json.Unmarshal(p.Message, &lp); err != nil {
+			slog.Debug("failed to unmarshal LeavePacket", "err", err)
+			return m, nil
+		}
+		s, cmd := m.chat.Update(leaveMsg{Nickname: lp.Nickname, Content: "has left the chat."})
+		m.chat = s
+		return m, cmd
 	case "j":
 		var jp shared.JoinPacket
 		if err := json.Unmarshal(p.Message, &jp); err != nil {
@@ -270,12 +289,14 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 		m.sidebar = s
 		return m, cmd
 	case "m":
-		var mp shared.MessagePacket
-		if err := json.Unmarshal(p.Message, &mp); err != nil {
-			slog.Debug("failed to unmarshal MessagePacket", "err", err)
+		// Inbound messages arrive already decrypted by the client backend as
+		// a local DecryptedMessage; the encrypted wire form never reaches here.
+		var dm shared.DecryptedMessage
+		if err := json.Unmarshal(p.Message, &dm); err != nil {
+			slog.Debug("failed to unmarshal DecryptedMessage", "err", err)
 			return m, nil
 		}
-		s, cmd := m.chat.Update(chatMsg{Sender: mp.Sender, Content: mp.Content})
+		s, cmd := m.chat.Update(chatMsg{Sender: dm.Sender, Content: dm.Content})
 		m.chat = s
 		return m, cmd
 	case "e":

@@ -66,8 +66,12 @@ func TestHandshakeSuccess(t *testing.T) {
 	conn := dialTestServer(t, ts)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// Send handshake
-	hs := shared.HandshakePacket{Nickname: "alice", PubKey: []byte("pk")}
+	// Send handshake: identity key for auth plus HPKE key for the directory
+	hs := shared.HandshakePacket{
+		Nickname:   "alice",
+		PubKey:     []byte("pk"),
+		HPKEPubKey: []byte("hpke-pk"),
+	}
 	gp := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs)}
 	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -85,10 +89,11 @@ func TestHandshakeSuccess(t *testing.T) {
 	if err := json.Unmarshal(reply.Message, &dir); err != nil {
 		t.Fatalf("unmarshal DirPacket failed: %v", err)
 	}
+	// The directory must carry the HPKE key, not the identity key.
 	if pk, ok := dir.CurrentUsers["alice"]; !ok {
 		t.Fatal("expected 'alice' in CurrentUsers")
-	} else if string(pk) != "pk" {
-		t.Fatalf("expected pubkey 'pk', got %q", string(pk))
+	} else if string(pk) != "hpke-pk" {
+		t.Fatalf("expected HPKE pubkey 'hpke-pk', got %q", string(pk))
 	}
 }
 

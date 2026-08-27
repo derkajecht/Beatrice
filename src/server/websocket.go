@@ -30,6 +30,19 @@ func (h *Hub) getClient(id string) *ServerClient {
 	return h.clients[id]
 }
 
+// getClientByNickname finds a connected client by nickname. A linear scan
+// under the existing read lock is fine at current scale.
+func (h *Hub) getClientByNickname(nickname string) *ServerClient {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, c := range h.clients {
+		if c.Nickname == nickname {
+			return c
+		}
+	}
+	return nil
+}
+
 // removeClient removes a client from the hub clients map
 func (h *Hub) removeClient(c string) {
 	h.mu.Lock()
@@ -92,6 +105,11 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 
 	defer func() {
 		h.removeClient(c.ID)
+		// Authoritative leave: only verified connections ever joined the
+		// directory, so only they trigger peer-side removal on disconnect.
+		if c.Verified && c.Nickname != "" {
+			h.Broadcast("l", shared.LeavePacket{Nickname: c.Nickname, PubKey: c.HPKEPubKey})
+		}
 		c.Conn.Close(websocket.StatusNormalClosure, "")
 	}()
 
@@ -150,7 +168,6 @@ func NewServerHandler(ctx context.Context, hub *Hub) http.Handler {
 // It takes the host, port, and database name as arguments
 // It returns an error if the host, port, or database name is empty
 func StartServer(host, port, dbName, dbLocation string) {
-
 	// check for empty args and log a warning if they are
 	if shared.HasEmptyArgs(host, port, dbName, dbLocation) {
 		slog.Warn("No host, port, db name or db location provided: Defaulting to localhost:8080, beatrice.db, and ./beatrice")
