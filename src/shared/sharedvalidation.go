@@ -10,3 +10,9 @@ import (
 func HasEmptyArgs(args ...string) bool {
 	return slices.Contains(args, "")
 }
+
+// ValidPresenceStatus reports whether s is a recognized presence status.
+// The server uses this to reject malformed presence updates before fan-out.
+func ValidPresenceStatus(s string) bool {
+	return s == PresenceActive || s == PresenceAway
+}

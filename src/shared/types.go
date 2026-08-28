@@ -2,6 +2,7 @@ package shared
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // GeneralPacket acts as the global Envelope for all network communication.
@@ -61,6 +62,21 @@ type DecryptedMessage struct {
 	Content string `json:"c"` // Plaintext; local only
 }
 
+// Presence status values carried by PresencePacket.Status.
+const (
+	PresenceActive = "active"
+	PresenceAway   = "away"
+)
+
+// PresencePacket announces a user's presence status. It is plaintext
+// metadata the server is meant to see: the server binds the nickname to the
+// authenticated connection and fans the update out to peers, so the wire
+// nickname is never trusted.
+type PresencePacket struct {
+	Nickname string `json:"n"`
+	Status   string `json:"s"` // PresenceActive or PresenceAway
+}
+
 type JoinPacket struct {
 	Nickname string `json:"n"`
 	PubKey   []byte `json:"k"` // HPKE KEM public key for message encryption
@@ -77,6 +93,10 @@ type LeavePacket struct {
 
 type ErrPacket struct {
 	Message string `json:"m"`
+}
+
+type PingPacket struct {
+	Time time.Time
 }
 
 type PubKey struct {

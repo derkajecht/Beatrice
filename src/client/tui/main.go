@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -25,23 +26,25 @@ const (
 )
 
 type model struct {
-	packetCh <-chan shared.GeneralPacket
-	logCh    <-chan []byte
-
-	nickname string
-	send     func(content string) error
-
-	viewport viewport.Model
-	sidebar  Section
-	chat     Section
-	header   Section
-	input    textinput.Model
-	tooSmall bool
+	packetCh      <-chan shared.GeneralPacket
+	logCh         <-chan []byte
+	nickname      string
+	send          func(content string) error
+	sendPresence  func(status string) error
+	active        bool
+	activityTimer time.Time
+	viewport      viewport.Model
+	sidebar       Section
+	chat          Section
+	header        Section
+	input         textinput.Model
+	tooSmall      bool
 }
 
 type (
-	logMsg    string
-	packetMsg shared.GeneralPacket
+	logMsg            string
+	packetMsg         shared.GeneralPacket
+	inactivityTickMsg struct{}
 )
 
 // chatMsg carries a single incoming or outgoing message. Own-ness (sent vs
@@ -56,8 +59,19 @@ type leaveMsg struct {
 	Content  string
 }
 
+type joinMsg struct {
+	Nickname string
+}
+
 type nicknameMsg struct {
 	Nickname string
+}
+
+// presenceMsg carries a peer's (or the local user's) presence status into
+// the sidebar.
+type presenceMsg struct {
+	Nickname string
+	Status   UserStatus
 }
 
 // scrollMsg scrolls the chat history. A negative value scrolls up.
@@ -71,19 +85,23 @@ type chatResizeMsg struct {
 
 // NewModel builds the TUI model. nickname and send wire up the message
 // composer: on Enter, the composer text is handed to send as plaintext; the
-// client backend handles encryption and per-recipient fan-out.
-func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error) model {
+// client backend handles encryption and per-recipient fan-out. sendPresence
+// is the separate plaintext presence path used by the inactivity timer.
+func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error, sendPresence func(status string) error) model {
 	input := newComposer()
 	input.Focus()
 	return model{
-		packetCh: packetCh,
-		logCh:    logCh,
-		nickname: nickname,
-		send:     send,
-		sidebar:  newSidebarModel(),
-		chat:     newChatModel(nickname),
-		header:   newHeaderModel(),
-		input:    input,
+		packetCh:      packetCh,
+		logCh:         logCh,
+		nickname:      nickname,
+		active:        true,
+		activityTimer: time.Now(),
+		send:          send,
+		sendPresence:  sendPresence,
+		sidebar:       newSidebarModel(),
+		chat:          newChatModel(nickname),
+		header:        newHeaderModel(),
+		input:         input,
 	}
 }
 
@@ -119,7 +137,7 @@ func lgStyle(hex string, bold bool) lg.Style {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(waitForLog(m.logCh), waitForPacket(m.packetCh))
+	return tea.Batch(waitForLog(m.logCh), waitForPacket(m.packetCh), waitForInactivity())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -128,11 +146,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height)
 		m.tooSmall = msg.Width < 44 || msg.Height < 10
+		var cmd tea.Cmd
+		m, cmd = m.markActive()
 		m = m.resize()
-		return m, nil
+		return m, cmd
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		var cmd tea.Cmd
+		m, cmd = m.markActive()
+		next, keyCmd := m.handleKey(msg)
+		return next, tea.Batch(cmd, keyCmd)
 
 	case logMsg:
 		updated, _ := m.chat.Update(msg)
@@ -143,8 +166,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m, cmd = m.handlePacket(msg)
 		return m, tea.Batch(waitForPacket(m.packetCh), cmd)
+
+	case inactivityTickMsg:
+		// The tick is started once in Init and re-armed here on every fire,
+		// so exactly one timer is ever pending. On expiry, transition
+		// active -> away exactly once and announce it via the presence
+		// path
+		if inactivityCheck(&m) && m.active {
+			m.active = false
+			return m, tea.Batch(m.presenceCmd(shared.PresenceAway), waitForInactivity())
+		}
+		return m, waitForInactivity()
+
 	}
 	return m, nil
+}
+
+// markActive records user activity: it resets the inactivity timer and, on
+// the single away -> active transition, announces the change via the
+// presence path.
+func (m model) markActive() (model, tea.Cmd) {
+	m.activityTimer = time.Now()
+	if m.active {
+		return m, nil
+	}
+	m.active = true
+	return m, m.presenceCmd(shared.PresenceActive)
+}
+
+// presenceCmd sends a presence update off the update loop. Failures are
+// logged; presence is best-effort and never blocks the TUI.
+func (m model) presenceCmd(status string) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.sendPresence(status); err != nil {
+			slog.Error("failed to send presence update", "status", status, "err", err)
+		}
+		return nil
+	}
 }
 
 // resize re-flows the chat viewport and composer to the current terminal size.
@@ -276,16 +334,33 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			slog.Debug("failed to unmarshal LeavePacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.chat.Update(leaveMsg{Nickname: lp.Nickname, Content: "has left the chat."})
+
+		s, chatCmd := m.chat.Update(leaveMsg{Nickname: lp.Nickname, Content: "has left the chat."})
 		m.chat = s
-		return m, cmd
+
+		s, sidebarCmd := m.sidebar.Update(leaveMsg{Nickname: lp.Nickname})
+		m.sidebar = s
+
+		return m, tea.Batch(chatCmd, sidebarCmd)
 	case "j":
 		var jp shared.JoinPacket
 		if err := json.Unmarshal(p.Message, &jp); err != nil {
 			slog.Debug("failed to unmarshal JoinPacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.sidebar.Update(jp.Nickname)
+		s, cmd := m.sidebar.Update(joinMsg{jp.Nickname})
+		m.sidebar = s
+		return m, cmd
+	case "p":
+		// Presence updates arrive with the nickname already bound to the
+		// authenticated connection server-side; update the matching sidebar
+		// user (including the local user, who is in the directory too).
+		var pp shared.PresencePacket
+		if err := json.Unmarshal(p.Message, &pp); err != nil {
+			slog.Debug("failed to unmarshal PresencePacket", "err", err)
+			return m, nil
+		}
+		s, cmd := m.sidebar.Update(presenceMsg{Nickname: pp.Nickname, Status: presenceStatus(pp.Status)})
 		m.sidebar = s
 		return m, cmd
 	case "m":
@@ -314,6 +389,15 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 		slog.Debug("unknown packet type", "type", p.Type)
 		return m, nil
 	}
+}
+
+// presenceStatus maps a wire presence status to the sidebar's UserStatus.
+// Unknown values fall back to active so a malformed packet can't hide a user.
+func presenceStatus(s string) UserStatus {
+	if s == shared.PresenceAway {
+		return StatusAway
+	}
+	return StatusActive
 }
 
 // layout returns (sidebarWidth, chatContentWidth, chatContentHeight, bodyHeight)
@@ -491,4 +575,15 @@ func waitForPacket(packetCh <-chan shared.GeneralPacket) tea.Cmd {
 		}
 		return packetMsg(packet)
 	}
+}
+
+// inactivityCheck returns true if 120s has passed since last user input
+func inactivityCheck(m *model) bool {
+	return time.Since(m.activityTimer) >= 120*time.Second
+}
+
+func waitForInactivity() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return inactivityTickMsg{}
+	})
 }

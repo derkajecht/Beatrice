@@ -83,6 +83,10 @@ func (h *Hub) Listener(ctx context.Context) {
 				if err := HandleMessage(h, msg.conn, packet); err != nil {
 					slog.Error("error handling message", "err", err)
 				}
+			case "p":
+				if err := HandlePresence(h, msg.conn, packet); err != nil {
+					slog.Error("error handling presence", "err", err)
+				}
 			case "j":
 				if err := HandleJoin(h, msg.conn, packet); err != nil {
 					slog.Error("error handling join", "err", err)

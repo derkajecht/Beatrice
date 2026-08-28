@@ -193,6 +193,37 @@ func HandleMessage(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	return nil
 }
 
+// HandlePresence handles incoming presence packets. Only verified clients
+// may announce presence; the status is validated and the nickname is bound
+// to the authenticated connection, never trusted from the wire. The update
+// is fanned out to all connected clients via the hub broadcast.
+func HandlePresence(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
+	var pp shared.PresencePacket
+	if err := json.Unmarshal(p.Message, &pp); err != nil {
+		return fmt.Errorf("malformed presence: %w", err)
+	}
+	// only authenticated clients may announce presence
+	if !c.Verified || c.Nickname == "" {
+		slog.Warn("presence from unverified connection rejected", "client", c.ID)
+		if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_unverified_sender"}); err != nil {
+			return fmt.Errorf("failed to send unverified-sender error: %w", err)
+		}
+		return nil
+	}
+
+	if !shared.ValidPresenceStatus(pp.Status) {
+		slog.Warn("invalid presence status rejected", "sender", c.Nickname, "status", pp.Status)
+		if err := SendPacketToClient(c, "e", &shared.ErrPacket{Message: "err_invalid_presence_status"}); err != nil {
+			return fmt.Errorf("failed to send invalid-status error: %w", err)
+		}
+		return nil
+	}
+
+	// the nickname is bound to the authenticated connection, never the wire
+	h.Broadcast("p", shared.PresencePacket{Nickname: c.Nickname, Status: pp.Status})
+	return nil
+}
+
 // HandleJoin rejects client-originated join announcements. The directory is
 // server-authoritative: joins are only emitted by completeHandshake after a
 // verified handshake, so clients cannot poison peers' HPKE key directories.

@@ -193,6 +193,14 @@ func (u *User) readLoop(ctx context.Context) {
 				continue
 			}
 			packet.Message = local
+		case "p":
+			// Presence updates carry no secrets; validate the shape so
+			// malformed packets are dropped before reaching the TUI.
+			var pp shared.PresencePacket
+			if err := json.Unmarshal(packet.Message, &pp); err != nil {
+				slog.Error("failed to unmarshal PresencePacket", "err", err)
+				continue
+			}
 		}
 
 		select {
@@ -236,7 +244,7 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 	return wsjson.Write(writeCtx, conn, envelope)
 }
 
-// SendMessageToPeers encrypts content for every currently connected user
+// BroadcastMessage encrypts content for every currently connected user
 // (excluding self) and sends one MessagePacket per recipient. With no other
 // users connected it returns an error so the TUI can surface it. Partial
 // encryption failures still deliver to reachable recipients; an error is only
@@ -290,6 +298,15 @@ func (u *User) BroadcastMessage(content string) error {
 	return nil
 }
 
+// SendPresence sends a presence packet to the server. This is a separate
+// path from encrypted chat sending: presence is plaintext metadata the
+// server is meant to see, validate, and fan out to peers. The server binds
+// the nickname to the authenticated connection, so the wire nickname here is
+// informational only.
+func (u *User) SendPresence(status string) error {
+	return u.SendPacketToServer("p", shared.PresencePacket{Nickname: u.Nickname, Status: status})
+}
+
 // StartClient establishes a connection to the server using the host and port provided.
 // It returns an error if the host or port is empty.
 func StartClient(host, port, nickname, ephemeral string) error {
@@ -328,7 +345,10 @@ func StartClient(host, port, nickname, ephemeral string) error {
 	send := func(content string) error {
 		return user.BroadcastMessage(content)
 	}
-	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send), tea.WithAltScreen())
+	sendPresence := func(status string) error {
+		return user.SendPresence(status)
+	}
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence), tea.WithAltScreen())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}

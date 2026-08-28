@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,17 +36,50 @@ func newSidebarModel() SidebarConfig {
 func (m SidebarConfig) Init() tea.Cmd { return nil }
 
 func (m SidebarConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
-	// Nicknames arrive as plain strings from dir/join packets.
-	name, ok := msg.(string)
-	if !ok {
+	switch msg := msg.(type) {
+	case joinMsg:
+		if msg.Nickname == "" {
+			return m, nil
+		}
+		for _, u := range m.Users {
+			if u.Name == msg.Nickname {
+				return m, nil // already present, don't duplicate
+			}
+		}
+		m.Users = append(m.Users, SidebarUser{Name: msg.Nickname, Status: StatusActive})
+		return m, nil
+	case leaveMsg:
+		if msg.Nickname == "" {
+			return m, nil
+		}
+		m.Users = slices.DeleteFunc(m.Users, func(u SidebarUser) bool {
+			return u.Name == msg.Nickname
+		})
+	case presenceMsg:
+		if msg.Nickname == "" {
+			return m, nil
+		}
+		for i, u := range m.Users {
+			if u.Name == msg.Nickname {
+				m.Users[i].Status = msg.Status
+				return m, nil
+			}
+		}
+		return m, nil
+	default:
+		name, ok := msg.(string)
+		if !ok {
+			return m, nil
+		}
+		for _, u := range m.Users {
+			if u.Name == msg {
+				return m, nil // already present, don't duplicate
+			}
+		}
+		m.Users = append(m.Users, SidebarUser{Name: name, Status: StatusActive})
 		return m, nil
 	}
-	for _, u := range m.Users {
-		if u.Name == name {
-			return m, nil // already present, don't duplicate
-		}
-	}
-	m.Users = append(m.Users, SidebarUser{Name: name, Status: StatusActive})
+
 	return m, nil
 }
 
@@ -88,9 +122,10 @@ func statusIcon(s UserStatus) (icon string, color lipgloss.TerminalColor) {
 	switch s {
 	case StatusAway:
 		return "◐", awayC
-	default:
+	case StatusActive:
 		return "●", activeC
 	}
+	return "", nil
 }
 
 func (m SidebarConfig) Name() string   { return "sidebar" }
