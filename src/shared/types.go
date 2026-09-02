@@ -45,6 +45,7 @@ type MessagePacket struct {
 	Enc       []byte `json:"enc"` // HPKE encapsulation key (Base64 on wire)
 	CT        []byte `json:"ct"`  // HPKE ciphertext (Base64 on wire)
 	Signature string `json:"sig"` // Sender's signature verifying authenticity
+	Time      time.Time
 }
 
 // MessageAAD derives the deterministic additional authenticated data bound
@@ -60,6 +61,7 @@ func MessageAAD(sender, recipient string) []byte {
 type DecryptedMessage struct {
 	Sender  string `json:"s"`
 	Content string `json:"c"` // Plaintext; local only
+	Time    time.Time
 }
 
 // Presence status values carried by PresencePacket.Status.

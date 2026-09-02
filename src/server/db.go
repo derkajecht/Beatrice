@@ -13,7 +13,6 @@ import (
 // NewDatabase initializes a new database connection
 // and checks if the connection is successful
 func NewDatabase(dbName, dbLocation string) (*DatabaseInfo, error) {
-
 	// create NewDatabaseInfo struct
 	cfg := NewDatabaseInfo(dbName, dbLocation)
 
@@ -44,7 +43,7 @@ func NewDatabase(dbName, dbLocation string) (*DatabaseInfo, error) {
 	}
 
 	// create the target directory if it doesn't exist
-	if err := os.MkdirAll(cfg.Location, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Location, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create target directory: %w", err)
 	}
 

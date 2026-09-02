@@ -187,7 +187,7 @@ func (u *User) readLoop(ctx context.Context) {
 				slog.Error("dropping undecryptable message", "sender", mp.Sender, "recipient", mp.Recipient, "err", err)
 				continue
 			}
-			local, err := json.Marshal(shared.DecryptedMessage{Sender: mp.Sender, Content: plaintext})
+			local, err := json.Marshal(shared.DecryptedMessage{Sender: mp.Sender, Content: plaintext, Time: mp.Time})
 			if err != nil {
 				slog.Error("failed to marshal decrypted message", "err", err)
 				continue
@@ -281,6 +281,7 @@ func (u *User) BroadcastMessage(content string) error {
 			Sender:    u.Nickname,
 			Enc:       t.Enc,
 			CT:        t.CT,
+			Time:      time.Now(),
 		}
 		if err := u.SendPacketToServer("m", wire); err != nil {
 			slog.Error("failed to send message", "recipient", t.Nickname, "err", err)
@@ -348,7 +349,7 @@ func StartClient(host, port, nickname, ephemeral string) error {
 	sendPresence := func(status string) error {
 		return user.SendPresence(status)
 	}
-	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence), tea.WithAltScreen())
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}

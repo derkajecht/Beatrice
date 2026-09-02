@@ -89,7 +89,8 @@ func (m SidebarConfig) View(width, height int, focused bool) string {
 	contentH := max(height-2, 1)
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("People"))
+	title := lipgloss.NewStyle().Foreground(textC).Bold(true).Render("People")
+	// b.WriteString(titleStyle.Render("People").Align(lipgloss.Center))
 
 	if len(m.Users) == 0 {
 		b.WriteString("\n\n")
@@ -102,10 +103,13 @@ func (m SidebarConfig) View(width, height int, focused bool) string {
 		}
 	}
 
-	content := lipgloss.NewStyle().
+	users := lipgloss.NewStyle().
 		Width(contentW).
-		Height(contentH).
+		Height(contentH - 1).
+		Align(lipgloss.Left).
 		Render(b.String())
+
+	content := lipgloss.JoinVertical(lipgloss.Center, title, users)
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -132,7 +136,7 @@ func (m SidebarConfig) Name() string   { return "sidebar" }
 func (m SidebarConfig) Chosen() string { return "" }
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(accentC)
+	// titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(accentC).Align(lipgloss.Center)
 	mutedStyle   = lipgloss.NewStyle().Foreground(faintC).Italic(true)
 	userRowStyle = lipgloss.NewStyle().Foreground(textC).PaddingLeft(1)
 )

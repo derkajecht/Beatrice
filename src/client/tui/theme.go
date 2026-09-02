@@ -4,6 +4,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// TODO: make this user configurable
 // Terminal-aware palette.
 //
 // Text and panels use the terminal's own foreground/background (no explicit

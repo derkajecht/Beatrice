@@ -8,13 +8,16 @@ import (
 )
 
 type HeaderConfig struct {
-	Status      string
+	Status      UserStatus
 	FocusedChat string
+	Nickname    string
+	ErrorMsg    string
 }
 
-func newHeaderModel() HeaderConfig {
+func newHeaderModel(nickname string) HeaderConfig {
 	return HeaderConfig{
-		Status:      "",
+		Status:      1,
+		Nickname:    nickname,
 		FocusedChat: "",
 	}
 }
@@ -22,6 +25,23 @@ func newHeaderModel() HeaderConfig {
 func (m HeaderConfig) Init() tea.Cmd { return nil }
 
 func (m HeaderConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
+	switch msg := msg.(type) {
+	case presenceMsg:
+		m.Status = msg.Status
+		m.ErrorMsg = ""
+		return m, nil
+	case errorMsg:
+		if msg.Content == "" {
+			return m, nil
+		}
+		m.ErrorMsg = msg.Content
+		return m, nil
+	case resetBar:
+		if msg.Content {
+			m.ErrorMsg = ""
+		}
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -30,19 +50,23 @@ func (m HeaderConfig) View(width, height int, focused bool) string {
 	dot := "●"
 	dotColor := activeC
 	label := "Connected"
-	if m.Status != "" {
-		dot = "●"
-		dotColor = errC
-		label = m.Status
+	if m.Status == 0 {
+		dot = "◐"
+		dotColor = awayC
+		label = "Away"
 	}
 
-	left := lipgloss.NewStyle().Bold(true).Foreground(accentC).Render(" Beatrice 🐶") +
-		"  " +
+	left := lipgloss.NewStyle().Bold(true).Foreground(mutedC).Render(m.Nickname) +
+		" " +
 		lipgloss.NewStyle().Foreground(dotColor).Render(dot) +
 		" " +
 		lipgloss.NewStyle().Foreground(mutedC).Render(label)
 
+	// Right: hint, replaced by an active error message styled in errC.
 	right := lipgloss.NewStyle().Foreground(faintC).Render("enter send · esc clear · ctrl+c quit")
+	if m.ErrorMsg != "" {
+		right = lipgloss.NewStyle().Foreground(errC).Italic(true).Render(m.ErrorMsg)
+	}
 
 	innerW := max(width-2, 1) // 1 cell padding on each side
 

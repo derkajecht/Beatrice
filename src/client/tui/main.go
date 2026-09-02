@@ -23,6 +23,10 @@ const (
 	composerPrompt  = " ❯ "
 	composerPromptW = 3 // visual cells of the prompt
 	headerHeight    = 1
+
+	// mouseWheelDelta is the number of lines scrolled per mouse wheel notch.
+	// Matches the bubbles v2 viewport's default MouseWheelDelta.
+	mouseWheelDelta = 3
 )
 
 type model struct {
@@ -52,6 +56,7 @@ type (
 type chatMsg struct {
 	Sender  string
 	Content string
+	Time    time.Time
 }
 
 type leaveMsg struct {
@@ -67,11 +72,19 @@ type nicknameMsg struct {
 	Nickname string
 }
 
+type errorMsg struct {
+	Content string
+}
+
 // presenceMsg carries a peer's (or the local user's) presence status into
 // the sidebar.
 type presenceMsg struct {
 	Nickname string
 	Status   UserStatus
+}
+
+type resetBar struct {
+	Content bool
 }
 
 // scrollMsg scrolls the chat history. A negative value scrolls up.
@@ -100,7 +113,7 @@ func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nicknam
 		sendPresence:  sendPresence,
 		sidebar:       newSidebarModel(),
 		chat:          newChatModel(nickname),
-		header:        newHeaderModel(),
+		header:        newHeaderModel(nickname),
 		input:         input,
 	}
 }
@@ -156,6 +169,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd = m.markActive()
 		next, keyCmd := m.handleKey(msg)
 		return next, tea.Batch(cmd, keyCmd)
+
+	case tea.MouseMsg:
+		// Mouse wheel scrolls the chat history regardless of focus. The
+		// viewport itself already has MouseWheelEnabled set, but its Update
+		// expects v2 tea messages which we can't construct here, so we route
+		// through the existing scrollMsg path.
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.chat, _ = m.chat.Update(scrollMsg(-mouseWheelDelta))
+		case tea.MouseButtonWheelDown:
+			m.chat, _ = m.chat.Update(scrollMsg(mouseWheelDelta))
+		default:
+			return m, nil
+		}
+		return m, nil
 
 	case logMsg:
 		updated, _ := m.chat.Update(msg)
@@ -220,6 +248,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	if h, ok := m.header.(HeaderConfig); ok {
+		h.ErrorMsg = ""
+		m.header = h
+	}
+
 	if m.input.Focused() {
 		return m.handleComposerKey(msg)
 	}
@@ -237,6 +270,18 @@ func (m model) handleComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		return m, nil
+	case "pgup":
+		// Page up scrolls the chat history without disturbing the composer
+		// text. Falling through to the textinput would be a no-op for a
+		// single-line field, but intercepting explicitly keeps text input
+		// unaffected regardless of the textinput's internal handling.
+		_, _, _, page := m.layout()
+		m.chat, _ = m.chat.Update(scrollMsg(-max(1, page/2)))
+		return m, nil
+	case "pgdown":
+		_, _, _, page := m.layout()
+		m.chat, _ = m.chat.Update(scrollMsg(max(1, page/2)))
 		return m, nil
 	}
 
@@ -291,8 +336,9 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	// one MessagePacket per recipient. It is never serialized onto the wire.
 	if err := m.send(rawContent); err != nil {
 		slog.Error("failed to send message", "err", err)
-		if h, ok := m.header.(HeaderConfig); ok {
-			h.Status = "send failed: " + err.Error()
+		if _, ok := m.header.(HeaderConfig); ok {
+			h, _ := m.header.Update(errorMsg{Content: "send failed: " + err.Error()})
+			// h.ErrorMsg = "send failed: " + err.Error()
 			m.header = h
 		}
 		return m, nil // keep the text so the user can retry
@@ -301,7 +347,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	m.input.Reset()
 
 	// Local echo: show the sender's own plaintext once, locally only.
-	s, _ := m.chat.Update(chatMsg{Sender: m.nickname, Content: rawContent})
+	s, _ := m.chat.Update(chatMsg{Sender: m.nickname, Content: rawContent, Time: time.Now()})
 	m.chat = s
 	return m, nil
 }
@@ -324,8 +370,10 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		for k := range dp.CurrentUsers {
-			s, _ := m.sidebar.Update(k)
-			m.sidebar = s
+			if k != m.nickname {
+				s, _ := m.sidebar.Update(k)
+				m.sidebar = s
+			}
 		}
 		return m, nil
 	case "l":
@@ -348,9 +396,12 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			slog.Debug("failed to unmarshal JoinPacket", "err", err)
 			return m, nil
 		}
-		s, cmd := m.sidebar.Update(joinMsg{jp.Nickname})
-		m.sidebar = s
-		return m, cmd
+		if jp.Nickname != m.nickname {
+			s, cmd := m.sidebar.Update(joinMsg{jp.Nickname})
+			m.sidebar = s
+			return m, cmd
+		}
+		return m, nil
 	case "p":
 		// Presence updates arrive with the nickname already bound to the
 		// authenticated connection server-side; update the matching sidebar
@@ -360,9 +411,14 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			slog.Debug("failed to unmarshal PresencePacket", "err", err)
 			return m, nil
 		}
+
 		s, cmd := m.sidebar.Update(presenceMsg{Nickname: pp.Nickname, Status: presenceStatus(pp.Status)})
 		m.sidebar = s
-		return m, cmd
+
+		s, headerCmd := m.header.Update(presenceMsg{Status: presenceStatus(pp.Status)})
+		m.header = s
+
+		return m, tea.Batch(cmd, headerCmd)
 	case "m":
 		// Inbound messages arrive already decrypted by the client backend as
 		// a local DecryptedMessage; the encrypted wire form never reaches here.
@@ -371,20 +427,23 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			slog.Debug("failed to unmarshal DecryptedMessage", "err", err)
 			return m, nil
 		}
-		s, cmd := m.chat.Update(chatMsg{Sender: dm.Sender, Content: dm.Content})
+		s, chatCmd := m.chat.Update(chatMsg{Sender: dm.Sender, Content: dm.Content, Time: dm.Time})
 		m.chat = s
-		return m, cmd
+		s, headerCmd := m.header.Update("reset")
+		m.sidebar = s
+		return m, tea.Batch(chatCmd, headerCmd)
 	case "e":
 		var ep shared.ErrPacket
 		if err := json.Unmarshal(p.Message, &ep); err != nil {
 			slog.Debug("failed to unmarshal ErrPacket", "err", err)
 			return m, nil
 		}
-		if h, ok := m.header.(HeaderConfig); ok {
-			h.Status = ep.Message
-			m.header = h
-		}
-		return m, nil
+		// Wire field is `m` (shared.ErrPacket.Message). Route through the
+		// header's errorMsg path so the existing ErrorMsg/errC design is
+		// reused; never push the raw packet into the chat log.
+		h, cmd := m.header.Update(errorMsg{Content: ep.Message})
+		m.header = h
+		return m, cmd
 	default:
 		slog.Debug("unknown packet type", "type", p.Type)
 		return m, nil
@@ -559,11 +618,27 @@ func toV2Key(k tea.KeyMsg) tea2.KeyPressMsg {
 
 func waitForLog(logCh <-chan []byte) tea.Cmd {
 	return func() tea.Msg {
-		message, ok := <-logCh
+		raw, ok := <-logCh
 		if !ok {
 			return nil
 		}
-		return logMsg(strings.TrimSpace(string(message)))
+		// slog records arrive as JSON like
+		// {"time":"...","level":"ERROR","msg":"...","err":"..."}.
+		// Show only the meaningful field: err first, then msg, otherwise fall
+		// back to the trimmed raw record so ordinary logs stay readable.
+		var rec struct {
+			Msg string `json:"msg"`
+			Err string `json:"err"`
+		}
+		if err := json.Unmarshal(raw, &rec); err == nil {
+			if rec.Err != "" {
+				return logMsg(rec.Err)
+			}
+			if rec.Msg != "" {
+				return logMsg(rec.Msg)
+			}
+		}
+		return logMsg(strings.TrimSpace(string(raw)))
 	}
 }
 

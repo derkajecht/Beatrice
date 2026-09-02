@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,7 @@ type chatMessage struct {
 	content  string
 	system   bool
 	leaveMsg bool
+	time     time.Time
 }
 
 type ChatViewConfig struct {
@@ -42,7 +44,7 @@ func (m ChatViewConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 		m.rebuild()
 
 	case chatMsg:
-		m.messages = append(m.messages, chatMessage{sender: msg.Sender, content: msg.Content})
+		m.messages = append(m.messages, chatMessage{sender: msg.Sender, content: msg.Content, time: msg.Time})
 		m.rebuild()
 
 	case leaveMsg:
@@ -98,8 +100,12 @@ func (m *ChatViewConfig) rebuild() {
 			Render("No messages yet — say hello!")}
 	}
 
+	wasAtBottom := m.viewport.AtBottom()
+
 	m.viewport.SetContent(strings.Join(lines, "\n"))
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // View renders the message area. The surrounding border, divider and composer
@@ -132,12 +138,16 @@ func renderMessage(msg chatMessage, ownNickname string, width int) []string {
 	}
 	bubble := renderBubble(content, contentMax, mine)
 
+	t := msg.time
+	s := t.Format(time.TimeOnly)
+	time := lipgloss.NewStyle().Foreground(faintC).Render(s)
+
 	if mine {
-		return rightBlock(bubble, width)
+		return rightBlock(lipgloss.JoinVertical(lipgloss.Right, time, bubble), width)
 	}
 
 	name := lipgloss.NewStyle().Foreground(accentC).Bold(true).Render(msg.sender)
-	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, bubble))
+	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, time, bubble))
 }
 
 // renderBubble wraps content, normalizes line widths so the bubble stays
@@ -236,7 +246,7 @@ func hardBreak(s string, limit int) []string {
 func leftBlock(block string) []string {
 	lines := strings.Split(block, "\n")
 	for i := range lines {
-		lines[i] = " " + lines[i]
+		lines[i] = strings.Repeat(" ", 1) + lines[i]
 	}
 	return lines
 }
@@ -254,13 +264,13 @@ func rightBlock(block string, width int) []string {
 }
 
 func renderSystemLine(content string, width int) string {
-	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("· " + content)
-	return lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
+	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("*** " + content + " ***")
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
 }
 
 func renderLeavePacket(sender, content string, width int) string {
-	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render(sender + " " + content)
-	return lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
+	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("--- " + sender + " " + content + " ---")
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
 }
 
 func (m ChatViewConfig) Name() string   { return "chat" }

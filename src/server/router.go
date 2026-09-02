@@ -12,11 +12,9 @@ import (
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
-func shortHash(pk []byte) string {
-	hasher := sha256.New()
-	hasher.Write(pk)
-	hash := hex.EncodeToString(hasher.Sum(nil))
-	return hash
+func shortHash(pk []byte, n int) string {
+	sum := sha256.Sum256(pk)
+	return hex.EncodeToString(sum[:])[:n]
 }
 
 func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
@@ -78,7 +76,7 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		return nil
 	}
 
-	cand := nickname + "-" + shortHash(hs.PubKey)
+	cand := nickname + "-" + shortHash(hs.PubKey, 10)
 	cpk, cexists, err := h.db.GetUserPK(cand)
 	if err != nil {
 		return fmt.Errorf("failed to look up user: %w", err)
