@@ -27,22 +27,28 @@ const (
 	// mouseWheelDelta is the number of lines scrolled per mouse wheel notch.
 	// Matches the bubbles v2 viewport's default MouseWheelDelta.
 	mouseWheelDelta = 3
+
+	// Sane fallbacks for non-positive values passed to NewModel. These keep
+	// the previous behavior intact when no override is supplied.
+	defaultInactivityTimeout = 120 * time.Second
+	composerCharLimit        = 2000
 )
 
 type model struct {
-	packetCh      <-chan shared.GeneralPacket
-	logCh         <-chan []byte
-	nickname      string
-	send          func(content string) error
-	sendPresence  func(status string) error
-	active        bool
-	activityTimer time.Time
-	viewport      viewport.Model
-	sidebar       Section
-	chat          Section
-	header        Section
-	input         textinput.Model
-	tooSmall      bool
+	packetCh          <-chan shared.GeneralPacket
+	logCh             <-chan []byte
+	nickname          string
+	send              func(content string) error
+	sendPresence      func(status string) error
+	active            bool
+	activityTimer     time.Time
+	inactivityTimeout time.Duration
+	viewport          viewport.Model
+	sidebar           Section
+	chat              Section
+	header            Section
+	input             textinput.Model
+	tooSmall          bool
 }
 
 type (
@@ -100,43 +106,65 @@ type chatResizeMsg struct {
 // composer: on Enter, the composer text is handed to send as plaintext; the
 // client backend handles encryption and per-recipient fan-out. sendPresence
 // is the separate plaintext presence path used by the inactivity timer.
-func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error, sendPresence func(status string) error) model {
+//
+// inactivityTimeout is how long the user can be idle before the model flips
+// from active to away. Non-positive values fall back to the previous built-in
+// default so callers that haven't been updated still behave as before.
+func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error, sendPresence func(status string) error, inactivityTimeout time.Duration) model {
+	if inactivityTimeout <= 0 {
+		inactivityTimeout = defaultInactivityTimeout
+	}
+
 	input := newComposer()
 	input.Focus()
 	return model{
-		packetCh:      packetCh,
-		logCh:         logCh,
-		nickname:      nickname,
-		active:        true,
-		activityTimer: time.Now(),
-		send:          send,
-		sendPresence:  sendPresence,
-		sidebar:       newSidebarModel(),
-		chat:          newChatModel(nickname),
-		header:        newHeaderModel(nickname),
-		input:         input,
+		packetCh:          packetCh,
+		logCh:             logCh,
+		nickname:          nickname,
+		active:            true,
+		activityTimer:     time.Now(),
+		inactivityTimeout: inactivityTimeout,
+		send:              send,
+		sendPresence:      sendPresence,
+		sidebar:           newSidebarModel(),
+		chat:              newChatModel(nickname),
+		header:            newHeaderModel(nickname),
+		input:             input,
 	}
 }
 
-// newComposer builds a styled single-line message input.
+// newComposer builds a styled single-line message input. Its colors are
+// drawn from the current theme snapshot so ApplyTheme takes effect on the
+// next composer rebuild.
 func newComposer() textinput.Model {
 	in := textinput.New()
 	in.Prompt = composerPrompt
 	in.Placeholder = "Type a message…"
-	in.CharLimit = 2000
+	in.CharLimit = composerCharLimit
 
-	// TODO: make colours user configurable. Default to false
+	borderFocus, text, faint, muted := composerTheme()
+
+	// Colours are sourced from the theme rather than hardcoded so
+	// ApplyTheme can rewire them at runtime.
 	styles := textinput.DefaultDarkStyles()
 	styles.Cursor.Blink = true
-	styles.Cursor.Color = lg.Color("13")
-	styles.Focused.Prompt = lgStyle("13", true)
-	styles.Focused.Text = lgStyle("default", false)
-	styles.Focused.Placeholder = lgStyle("8", false)
-	styles.Blurred.Prompt = lgStyle("7", false)
-	styles.Blurred.Text = lgStyle("default", false)
-	styles.Blurred.Placeholder = lgStyle("8", false)
+	styles.Cursor.Color = lg.Color(borderFocus)
+	styles.Focused.Prompt = lgStyle(borderFocus, true)
+	styles.Focused.Text = lgStyle(text, false)
+	styles.Focused.Placeholder = lgStyle(faint, false)
+	styles.Blurred.Prompt = lgStyle(muted, false)
+	styles.Blurred.Text = lgStyle(text, false)
+	styles.Blurred.Placeholder = lgStyle(faint, false)
 	in.SetStyles(styles)
 	return in
+}
+
+// composerTheme pulls the subset of raw color strings the composer needs.
+// Returning them as a tuple keeps the call site readable without leaking
+// the package-level theme vars.
+func composerTheme() (borderFocus, text, faint, muted string) {
+	_, bf, _, tx, mu, fa := rawThemeSnapshot()
+	return bf, tx, fa, mu
 }
 
 // lgStyle builds a v2 lipgloss style for the bubbles v2 textinput, which uses
@@ -429,8 +457,8 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 		}
 		s, chatCmd := m.chat.Update(chatMsg{Sender: dm.Sender, Content: dm.Content, Time: dm.Time})
 		m.chat = s
-		s, headerCmd := m.header.Update("reset")
-		m.sidebar = s
+		s, headerCmd := m.header.Update(resetBar{Content: true})
+		m.header = s
 		return m, tea.Batch(chatCmd, headerCmd)
 	case "e":
 		var ep shared.ErrPacket
@@ -652,9 +680,10 @@ func waitForPacket(packetCh <-chan shared.GeneralPacket) tea.Cmd {
 	}
 }
 
-// inactivityCheck returns true if 120s has passed since last user input
+// inactivityCheck returns true if the configured inactivity timeout has
+// passed since the last user input.
 func inactivityCheck(m *model) bool {
-	return time.Since(m.activityTimer) >= 120*time.Second
+	return time.Since(m.activityTimer) >= m.inactivityTimeout
 }
 
 func waitForInactivity() tea.Cmd {

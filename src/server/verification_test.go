@@ -1,132 +1,104 @@
 package server
 
 import (
-	"context"
 	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/json"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
+// TestChallengeVerificationSuccess proves a new user must answer a challenge
+// before receiving the directory, and a returning user gets a fresh challenge
+// that a valid signature satisfies again.
 func TestChallengeVerificationSuccess(t *testing.T) {
 	hub, ctx, _ := newTestHub(t)
 	ts := httptest.NewServer(NewServerHandler(ctx, hub))
 	defer ts.Close()
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
+	pub, priv := newIdentity(t)
 
-	// Register a new user (trust on first use).
+	// New user: the handshake is answered with a challenge, not a directory.
 	conn1 := dialTestServer(t, ts)
 	defer conn1.Close(websocket.StatusNormalClosure, "")
-	hs1 := shared.HandshakePacket{Nickname: "carol", PubKey: pub}
-	gp1 := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs1)}
-	writeCtx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel1()
-	if err := wsjson.Write(writeCtx1, conn1, gp1); err != nil {
-		t.Fatalf("client1 write failed: %v", err)
-	}
-	if reply := readGeneralPacket(t, conn1); reply.Type != "d" {
-		t.Fatalf("new user expected 'd', got %q", reply.Type)
+	sendHandshake(t, conn1, "carol", pub, []byte("hpke-carol"))
+	cp := expectChallenge(t, conn1)
+	respondChallenge(t, conn1, priv, cp.PendingAuth)
+	expectDir(t, conn1)
+	if c := hub.getClientByNickname("carol"); c == nil || !c.Verified {
+		t.Fatal("carol should be verified after the challenge response")
 	}
 
-	// Reconnect as a returning user — server must issue a challenge.
+	// Returning user: challenged again, valid signature succeeds.
 	conn2 := dialTestServer(t, ts)
 	defer conn2.Close(websocket.StatusNormalClosure, "")
-	hs2 := shared.HandshakePacket{Nickname: "carol", PubKey: pub}
-	gp2 := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs2)}
-	writeCtx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel2()
-	if err := wsjson.Write(writeCtx2, conn2, gp2); err != nil {
-		t.Fatalf("client2 write failed: %v", err)
-	}
-	reply2 := readGeneralPacket(t, conn2)
-	if reply2.Type != "c" {
-		t.Fatalf("returning user expected 'c', got %q", reply2.Type)
-	}
-	var cp shared.ChallengePacket
-	if err := json.Unmarshal(reply2.Message, &cp); err != nil {
-		t.Fatalf("unmarshal ChallengePacket failed: %v", err)
-	}
-
-	// Sign the nonce and respond.
-	sig := ed25519.Sign(priv, []byte(cp.PendingAuth))
-	resp := shared.ChallengeResponse{Signature: sig, Nonce: cp.PendingAuth}
-	gp3 := shared.GeneralPacket{Type: "c", Message: mustMarshal(t, resp)}
-	writeCtx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel3()
-	if err := wsjson.Write(writeCtx3, conn2, gp3); err != nil {
-		t.Fatalf("challenge response write failed: %v", err)
-	}
-	if reply3 := readGeneralPacket(t, conn2); reply3.Type != "d" {
-		t.Fatalf("verified user expected 'd', got %q", reply3.Type)
+	sendHandshake(t, conn2, "carol", pub, []byte("hpke-carol"))
+	cp = expectChallenge(t, conn2)
+	respondChallenge(t, conn2, priv, cp.PendingAuth)
+	dir := expectDir(t, conn2)
+	if hpkeGot := dir.CurrentUsers["carol"]; string(hpkeGot) != "hpke-carol" {
+		t.Fatalf("directory must carry the HPKE key for carol, got %q", hpkeGot)
 	}
 }
 
+// TestChallengeRejectsBadSignature proves a signature from the wrong key
+// cannot authenticate: the client gets an error and stays unverified.
 func TestChallengeRejectsBadSignature(t *testing.T) {
 	hub, ctx, _ := newTestHub(t)
 	ts := httptest.NewServer(NewServerHandler(ctx, hub))
 	defer ts.Close()
 
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	_, otherPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate other key: %v", err)
-	}
+	pub, _ := newIdentity(t)
+	_, otherPriv := newIdentity(t)
 
-	// Register.
-	conn1 := dialTestServer(t, ts)
+	conn := dialTestServer(t, ts)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// New user is challenged; a signature from the wrong key fails.
+	sendHandshake(t, conn, "dave", pub, []byte("hpke-dave"))
+	cp := expectChallenge(t, conn)
+	resp := shared.ChallengeResponse{
+		Signature: ed25519.Sign(otherPriv, []byte(cp.PendingAuth)),
+		Nonce:     cp.PendingAuth,
+	}
+	writeGeneralPacket(t, conn, shared.GeneralPacket{Type: "c", Message: mustMarshal(t, resp)})
+
+	if ep := expectErr(t, conn); ep.Message != "err_challenge_failed" {
+		t.Fatalf("unexpected error message: %q", ep.Message)
+	}
+	if c := hub.getClientByNickname("dave"); c == nil || c.Verified {
+		t.Fatal("failed challenge must not mark the connection verified")
+	}
+}
+
+// TestChallengeNonceReplayRejected proves a challenge nonce is burned on use:
+// replaying a successful challenge response cannot authenticate again.
+func TestChallengeNonceReplayRejected(t *testing.T) {
+	hub, ctx, _ := newTestHub(t)
+	ts := httptest.NewServer(NewServerHandler(ctx, hub))
+	defer ts.Close()
+
+	// First contact: complete the full flow.
+	conn1, pub, priv := completeChallengeHandshake(t, ts, "erin", []byte("hpke-erin"))
 	defer conn1.Close(websocket.StatusNormalClosure, "")
-	hs1 := shared.HandshakePacket{Nickname: "dave", PubKey: pub}
-	gp1 := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs1)}
-	writeCtx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel1()
-	if err := wsjson.Write(writeCtx1, conn1, gp1); err != nil {
-		t.Fatalf("client1 write failed: %v", err)
-	}
-	if reply := readGeneralPacket(t, conn1); reply.Type != "d" {
-		t.Fatalf("new user expected 'd', got %q", reply.Type)
-	}
 
-	// Reconnect, get challenge, respond with a signature from the wrong key.
+	// Reconnect and complete the challenge legitimately.
 	conn2 := dialTestServer(t, ts)
 	defer conn2.Close(websocket.StatusNormalClosure, "")
-	hs2 := shared.HandshakePacket{Nickname: "dave", PubKey: pub}
-	gp2 := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs2)}
-	writeCtx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel2()
-	if err := wsjson.Write(writeCtx2, conn2, gp2); err != nil {
-		t.Fatalf("client2 write failed: %v", err)
+	sendHandshake(t, conn2, "erin", pub, []byte("hpke-erin"))
+	cp := expectChallenge(t, conn2)
+	resp := shared.ChallengeResponse{
+		Signature: ed25519.Sign(priv, []byte(cp.PendingAuth)),
+		Nonce:     cp.PendingAuth,
 	}
-	reply2 := readGeneralPacket(t, conn2)
-	if reply2.Type != "c" {
-		t.Fatalf("returning user expected 'c', got %q", reply2.Type)
-	}
-	var cp shared.ChallengePacket
-	if err := json.Unmarshal(reply2.Message, &cp); err != nil {
-		t.Fatalf("unmarshal ChallengePacket failed: %v", err)
+	writeGeneralPacket(t, conn2, shared.GeneralPacket{Type: "c", Message: mustMarshal(t, resp)})
+	expectDir(t, conn2)
+	if r := readGeneralPacket(t, conn2); r.Type != "j" {
+		t.Fatalf("expected own 'j' broadcast, got %q", r.Type)
 	}
 
-	badSig := ed25519.Sign(otherPriv, []byte(cp.PendingAuth))
-	resp := shared.ChallengeResponse{Signature: badSig, Nonce: cp.PendingAuth}
-	gp3 := shared.GeneralPacket{Type: "c", Message: mustMarshal(t, resp)}
-	writeCtx3, cancel3 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel3()
-	if err := wsjson.Write(writeCtx3, conn2, gp3); err != nil {
-		t.Fatalf("challenge response write failed: %v", err)
-	}
-	if reply3 := readGeneralPacket(t, conn2); reply3.Type != "e" {
-		t.Fatalf("bad signature expected 'e', got %q", reply3.Type)
-	}
+	// Replaying the exact same response must fail: the nonce is consumed.
+	writeGeneralPacket(t, conn2, shared.GeneralPacket{Type: "c", Message: mustMarshal(t, resp)})
+	expectErr(t, conn2)
 }

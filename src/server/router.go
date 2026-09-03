@@ -30,6 +30,21 @@ func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
 	return nil
 }
 
+// createNonce issues a nonce and sends the packet to the client as part of the challenge flow
+func createNonce(h *Hub, c *ServerClient) error {
+	nonce, err := h.nonces.Issue()
+	if err != nil {
+		return fmt.Errorf("failed to issue challenge nonce: %w", err)
+	}
+	if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
+		return fmt.Errorf("failed to store user: %w", err)
+	}
+	if err := c.SendChallenge(h, nonce); err != nil {
+		return fmt.Errorf("failed to send challenge: %w", err)
+	}
+	return nil
+}
+
 // HandleHandshake receives the handshake packet from the client
 // validates username and public key, and saves the client to the hub
 // returns an error if the handshake fails
@@ -45,67 +60,59 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		return fmt.Errorf("nickname too short")
 	}
 
+	// check if user already exists in the db
 	storedPubKey, exists, err := h.db.GetUserPK(nickname)
 	if err != nil {
 		return fmt.Errorf("failed to look up user: %w", err)
 	}
 
+	// set ServerClient fields to the received values
 	c.Nickname = nickname
 	c.PubKey = hs.PubKey
 	c.HPKEPubKey = hs.HPKEPubKey
 
+	// If user doesn't already exist, TOFU register
+	// TOFU users still need to follow ChallengeResponse
 	if !exists {
-		// TOFU register
-		if err := h.db.StoreUser(nickname, hs.PubKey); err != nil {
-			return fmt.Errorf("failed to store user: %w", err)
+		if err := createNonce(h, c); err != nil {
+			return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
 		}
-		c.Verified = true
-		return completeHandshake(h, c) // sends dir packet to user and broadcasts join packet to all other active users
-	}
+	} else if exists && bytes.Equal(storedPubKey, hs.PubKey) { // returning user
+		if err := createNonce(h, c); err != nil {
+			return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
+		}
+	} else {
+		cand := nickname + "-" + shortHash(hs.PubKey, 10)
+		cpk, cexists, err := h.db.GetUserPK(cand)
+		if err != nil {
+			return fmt.Errorf("failed to look up user: %w", err)
+		}
 
-	// returning user
-	if bytes.Equal(storedPubKey, hs.PubKey) {
+		slog.Info("assigned suffix nickname", "original", nickname, "assigned", cand)
+		if cexists && !bytes.Equal(cpk, hs.PubKey) {
+			return fmt.Errorf("hash collision on %q", cand) // ~impossible
+		}
+
+		// properly handle in the TUI - show message in chatview
+		c.Nickname = cand
+		if err := SendPacketToClient(c, "n", shared.NicknameUpdatePacket{Nickname: cand}); err != nil {
+			return fmt.Errorf("failed to send nickname change packet: %w", err)
+		}
+
+		if !cexists {
+			if err := createNonce(h, c); err != nil {
+				return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
+			}
+		}
+
+		// Returning user under suffixed name -> prove ownership
 		nonce, err := h.nonces.Issue()
-		// challenge flow
 		if err != nil {
 			return fmt.Errorf("failed to issue challenge nonce: %w", err)
 		}
-		if err := c.SendChallenge(h, nonce); err != nil {
-			return fmt.Errorf("failed to send challenge: %w", err)
-		}
-		return nil
+		return c.SendChallenge(h, nonce)
 	}
-
-	cand := nickname + "-" + shortHash(hs.PubKey, 10)
-	cpk, cexists, err := h.db.GetUserPK(cand)
-	if err != nil {
-		return fmt.Errorf("failed to look up user: %w", err)
-	}
-
-	slog.Info("assigned suffix nickname", "original", nickname, "assigned", cand)
-	if cexists && !bytes.Equal(cpk, hs.PubKey) {
-		return fmt.Errorf("hash collision on %q", cand) // ~impossible
-	}
-
-	c.Nickname = cand
-	if err := SendPacketToClient(c, "n", shared.NicknameUpdatePacket{Nickname: cand}); err != nil {
-		return fmt.Errorf("failed to send nickname change packet: %w", err)
-	}
-
-	if !cexists {
-		// New user under suffixed name -> TOFU register and complete
-		if err := h.db.StoreUser(cand, hs.PubKey); err != nil {
-			return fmt.Errorf("failed to store user: %w", err)
-		}
-		c.Verified = true
-		return completeHandshake(h, c)
-	}
-	// Returning user under suffixed name -> prove ownership
-	nonce, err := h.nonces.Issue()
-	if err != nil {
-		return fmt.Errorf("failed to issue challenge nonce: %w", err)
-	}
-	return c.SendChallenge(h, nonce)
+	return nil
 }
 
 func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {

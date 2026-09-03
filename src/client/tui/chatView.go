@@ -94,10 +94,12 @@ func (m *ChatViewConfig) rebuild() {
 	}
 
 	if len(lines) == 0 {
-		lines = []string{lipgloss.NewStyle().
-			Foreground(faintC).
-			Italic(true).
-			Render("No messages yet — say hello!")}
+		lines = []string{
+			lipgloss.NewStyle().
+				Foreground(faintC).
+				Italic(true).
+				Render("No messages yet — say hello!"),
+		}
 	}
 
 	wasAtBottom := m.viewport.AtBottom()

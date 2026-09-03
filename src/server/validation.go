@@ -9,10 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/derkajecht/Beatrice/src/shared"
 )
 
 func UsernameSanitizer(username string) string {
@@ -33,24 +34,10 @@ const (
 	unknown        // 3
 )
 
-// simple check for OS
-func checkOS() int {
-	switch os := runtime.GOOS; os {
-	case "darwin":
-		return darwin
-	case "linux":
-		return linux
-	case "windows":
-		return windows
-	default:
-		return unknown
-	}
-}
-
 // CreateLocation creates the target directory for the database depending on the OS
 func (cfg *DatabaseInfo) CreateLocation() error {
 	// store the OS type in j
-	j := checkOS()
+	j := shared.CheckOS()
 	// switch on the OS type and assign the appropriate location
 	homeDir, _ := os.UserHomeDir()
 	switch j {
@@ -59,7 +46,7 @@ func (cfg *DatabaseInfo) CreateLocation() error {
 	case linux:
 		cfg.Location = filepath.Join(homeDir, ".beatrice")
 	case windows:
-		cfg.Location = filepath.Join(homeDir, ("APPDATA"), "Beatrice")
+		cfg.Location = filepath.Join(homeDir, "APPDATA", "Beatrice")
 	default:
 		return fmt.Errorf("unknown OS")
 	}

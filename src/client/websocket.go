@@ -308,12 +308,13 @@ func (u *User) SendPresence(status string) error {
 	return u.SendPacketToServer("p", shared.PresencePacket{Nickname: u.Nickname, Status: status})
 }
 
-// StartClient establishes a connection to the server using the host and port provided.
+// StartClient establishes a connection to the server using the host and port
+// provided and runs the TUI with the given configuration.
 // It returns an error if the host or port is empty.
-func StartClient(host, port, nickname, ephemeral string) error {
+func StartClient(host, port, nickname, ephemeral string, cfg Config) error {
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
-		slog.Warn("No host or port provided: Defaulting to localhost:8080")
+		slog.Warn("No host or port provided: Defaulting to 'localhost:8080'")
 		host = "localhost"
 		port = "8080"
 	}
@@ -349,7 +350,8 @@ func StartClient(host, port, nickname, ephemeral string) error {
 	sendPresence := func(status string) error {
 		return user.SendPresence(status)
 	}
-	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	tui.ApplyTheme(cfg.Theme)
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence, cfg.InactivityTimeout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}

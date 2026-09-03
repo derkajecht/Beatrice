@@ -12,42 +12,13 @@ import (
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
-// handshakeClient dials the test server and completes a TOFU handshake,
-// draining the directory packet and join broadcasts that follow. The
-// handshake carries both the identity key and the HPKE public key, exactly
-// like the real client.
+// handshakeClient dials the test server and completes the full
+// challenge-response handshake with a fresh ed25519 identity, draining the
+// directory packet and join broadcast that follow. The handshake carries both
+// the identity key and the HPKE public key, exactly like the real client.
 func handshakeClient(t *testing.T, ts *httptest.Server, nickname string) *websocket.Conn {
 	t.Helper()
-	conn := dialTestServer(t, ts)
-	t.Cleanup(func() { conn.Close(websocket.StatusNormalClosure, "") })
-
-	hs := shared.HandshakePacket{
-		Nickname:   nickname,
-		PubKey:     []byte("identity-" + nickname),
-		HPKEPubKey: []byte("hpke-" + nickname),
-	}
-	gp := shared.GeneralPacket{Type: "h", Message: mustMarshal(t, hs)}
-	writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := wsjson.Write(writeCtx, conn, gp); err != nil {
-		t.Fatalf("%s handshake write failed: %v", nickname, err)
-	}
-
-	// own directory packet + own join broadcast
-	dirReply := readGeneralPacket(t, conn)
-	if dirReply.Type != "d" {
-		t.Fatalf("%s expected 'd', got %q", nickname, dirReply.Type)
-	}
-	var dir shared.DirPacket
-	if err := json.Unmarshal(dirReply.Message, &dir); err != nil {
-		t.Fatalf("unmarshal DirPacket failed: %v", err)
-	}
-	if string(dir.CurrentUsers[nickname]) != "hpke-"+nickname {
-		t.Fatalf("directory must carry the HPKE key for %s, got %q", nickname, dir.CurrentUsers[nickname])
-	}
-	if r := readGeneralPacket(t, conn); r.Type != "j" {
-		t.Fatalf("%s expected 'j', got %q", nickname, r.Type)
-	}
+	conn, _, _ := completeChallengeHandshake(t, ts, nickname, []byte("hpke-"+nickname))
 	return conn
 }
 
