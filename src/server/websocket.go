@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +16,11 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/derkajecht/Beatrice/src/shared"
+)
+
+var (
+	CertFilePath = "/home/jmack/Documents/Beatrice/test/server.cert"
+	KeyFilePath  = "/home/jmack/Documents/Beatrice/test/host.key"
 )
 
 // addClient adds a client to the hub clients map
@@ -224,9 +230,17 @@ func StartServer(host, port, dbName, dbLocation string) {
 	mux := NewServerHandler(ctx, hub)
 
 	addr := fmt.Sprintf("%s:%s", host, port)
+	cert, err := tls.LoadX509KeyPair(CertFilePath, KeyFilePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
 	server := http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:      addr,
+		Handler:   mux,
+		TLSConfig: tlsConfig,
 	}
 
 	// shut down the http server when ctx is cancelled (ctrl+c, SIGTERM)
@@ -240,7 +254,7 @@ func StartServer(host, port, dbName, dbLocation string) {
 		}
 	}()
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := server.ListenAndServeTLS(CertFilePath, KeyFilePath); err != nil && err != http.ErrServerClosed {
 		slog.Error("Error starting server", "err", err)
 	}
 }

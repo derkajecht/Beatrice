@@ -3,10 +3,12 @@ package client
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,7 +24,17 @@ import (
 func (u *User) ConnectWithRetry(ctx context.Context, retryCount int) (*websocket.Conn, error) {
 	var lastErr error
 	for i := range retryCount {
-		conn, _, err := websocket.Dial(ctx, u.Addr, nil)
+		customHTTPClient := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, // Use only for local testing!
+				},
+			},
+		}
+		opts := &websocket.DialOptions{
+			HTTPClient: customHTTPClient,
+		}
+		conn, _, err := websocket.Dial(ctx, u.Addr, opts)
 		if err == nil {
 			return conn, nil
 		}
@@ -345,7 +357,7 @@ func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error 
 	// TODO: ws:// leaves the challenge, directory, and message metadata in
 	// plaintext. Use wss:// and wire certificate configuration through the
 	// server/client instead of relying on the unused TLS helper.
-	addr := fmt.Sprintf("ws://%s:%s/ws", host, port)
+	addr := fmt.Sprintf("wss://%s:%s/ws", host, port)
 
 	// create a new context with a timeout of 30 seconds
 	rootCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
