@@ -30,14 +30,11 @@ func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
 	return nil
 }
 
-// createNonce issues a nonce and sends the packet to the client as part of the challenge flow
-func createNonce(h *Hub, c *ServerClient) error {
+// beginUserRegistration
+func (h *Hub) beginUserRegistration(c *ServerClient, exists bool) error {
 	nonce, err := h.nonces.Issue()
 	if err != nil {
 		return fmt.Errorf("failed to issue challenge nonce: %w", err)
-	}
-	if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
-		return fmt.Errorf("failed to store user: %w", err)
 	}
 	if err := c.SendChallenge(h, nonce); err != nil {
 		return fmt.Errorf("failed to send challenge: %w", err)
@@ -69,18 +66,18 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	// set ServerClient fields to the received values
 	c.Nickname = nickname
 	c.PubKey = hs.PubKey
-	c.HPKEPubKey = hs.HPKEPubKey
+	c.HPKEPubKey = hs.EncodedPubKey.Key
+	c.HPKEKem = hs.EncodedPubKey.KEM
 
 	// If user doesn't already exist, TOFU register
 	// TOFU users still need to follow ChallengeResponse
 	if !exists {
-		if err := createNonce(h, c); err != nil {
-			return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
+		if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
+			return fmt.Errorf("failed to store user: %w", err)
 		}
+		h.beginUserRegistration(c, exists)
 	} else if exists && bytes.Equal(storedPubKey, hs.PubKey) { // returning user
-		if err := createNonce(h, c); err != nil {
-			return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
-		}
+		h.beginUserRegistration(c, exists)
 	} else {
 		cand := nickname + "-" + shortHash(hs.PubKey, 10)
 		cpk, cexists, err := h.db.GetUserPK(cand)
@@ -100,8 +97,15 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		}
 
 		if !cexists {
-			if err := createNonce(h, c); err != nil {
-				return fmt.Errorf("failed to issue nonce and send challenge packet to client: %w", err)
+			nonce, err := h.nonces.Issue()
+			if err != nil {
+				return fmt.Errorf("failed to issue challenge nonce: %w", err)
+			}
+			if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
+				return fmt.Errorf("failed to store user: %w", err)
+			}
+			if err := c.SendChallenge(h, nonce); err != nil {
+				return fmt.Errorf("failed to send challenge: %w", err)
 			}
 		}
 
@@ -125,6 +129,9 @@ func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	if !CheckChallenge(&cr, c, h) {
 		return fmt.Errorf("challenge verification failed")
 	}
+	// burn nonce after challenge has been checked
+	h.nonces.BurnNonce(cr.Nonce)
+
 	c.Verified = true
 	return completeHandshake(h, c)
 }
@@ -141,13 +148,15 @@ func completeHandshake(h *Hub, c *ServerClient) error {
 	h.mu.RLock()
 	for _, client := range h.clients {
 		dirPacket.CurrentUsers[client.Nickname] = client.HPKEPubKey
+		dirPacket.EncodedPubKey.KEM = client.HPKEKem
+		dirPacket.EncodedPubKey.Key = client.HPKEPubKey
 	}
 	h.mu.RUnlock()
 
 	if err := SendPacketToClient(c, "d", dirPacket); err != nil {
 		return fmt.Errorf("failed to send directory: %w", err)
 	}
-	h.Broadcast("j", shared.JoinPacket{Nickname: c.Nickname, PubKey: c.HPKEPubKey})
+	h.Broadcast("j", shared.JoinPacket{Nickname: c.Nickname, EncodedPubKey: shared.WireHPKEPubKey{KEM: c.HPKEKem, Key: c.HPKEPubKey}})
 	return nil
 }
 

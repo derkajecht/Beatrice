@@ -18,14 +18,15 @@ type ServerClient struct {
 	Nickname   string
 	PubKey     []byte // ed25519 identity public key (DB/TOFU + challenge verification)
 	HPKEPubKey []byte // HPKE KEM public key, distributed to peers via Dir/Join packets
+	HPKEKem    uint16
 	Verified   bool
 }
 
 func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {
 	return &ServerClient{
-		ID:       ID,
-		Conn:     conn,
-		PubKey:   []byte{},
+		ID:   ID,
+		Conn: conn,
+		// PubKey:   kem.PublicKey,
 		Verified: false, // no trust by default. proven by challenge packet success
 	}
 }

@@ -73,10 +73,11 @@ func (u *User) NewChatClient(ctx context.Context) {
 
 				// send handshake to server: identity key for auth/TOFU plus
 				// the HPKE public key users will use to encrypt messages to us
+				wireKey, err := EncodePubKey(u.Crypto.Suite.KEM, u.Crypto.PubKey)
 				err = u.SendPacketToServer("h", shared.HandshakePacket{
-					Nickname:   u.Nickname,
-					PubKey:     u.Crypto.IdentityPubKey,
-					HPKEPubKey: u.Crypto.PubKey,
+					Nickname:      u.Nickname,
+					PubKey:        u.Crypto.IdentityPubKey,
+					EncodedPubKey: wireKey,
 				})
 				if err != nil {
 					slog.Error("failed to send handshake", "err", err)
@@ -158,14 +159,18 @@ func (u *User) readLoop(ctx context.Context) {
 				slog.Error("failed to unmarshal DirPacket", "err", err)
 				continue
 			}
-			u.ApplyDirPacket(dp.CurrentUsers)
+			u.ApplyDirPacket(dp.CurrentUsers, dp.EncodedPubKey)
 		case "j":
 			var jp shared.JoinPacket
 			if err := json.Unmarshal(packet.Message, &jp); err != nil {
 				slog.Error("failed to unmarshal JoinPacket", "err", err)
 				continue
 			}
-			u.ApplyJoin(jp.Nickname, jp.PubKey)
+			pubKey, err := DecodePubKey(jp.EncodedPubKey)
+			if err != nil {
+				continue
+			}
+			u.ApplyJoin(jp.Nickname, pubKey)
 		case "l":
 			var lp shared.LeavePacket
 			if err := json.Unmarshal(packet.Message, &lp); err != nil {
@@ -250,7 +255,14 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 // encryption failures still deliver to reachable recipients; an error is only
 // returned when nothing could be encrypted or no send succeeded.
 func (u *User) BroadcastMessage(content string) error {
-	users := u.GetConnectedUserInfo()
+	users := u.ConnectedUsers
+	// fmt.Println("🪚 u.ConnectedUsers:", u.ConnectedUsers)
+	// early exit if no other connected users
+	if len(users) == 0 {
+		return fmt.Errorf("no other users connected")
+	}
+
+	// create list of targets, excluding yourself
 	targets := make([]string, 0, len(users))
 	for nickname := range users {
 		if nickname == u.Nickname {
@@ -258,19 +270,16 @@ func (u *User) BroadcastMessage(content string) error {
 		}
 		targets = append(targets, nickname)
 	}
-	if len(targets) == 0 {
-		return fmt.Errorf("no other users connected")
-	}
 
-	encrypted, encErr := EncryptMessage(u, targets, content)
+	encrypted, err := EncryptMessage(u, targets, content)
 	if len(encrypted) == 0 {
-		if encErr == nil {
-			encErr = fmt.Errorf("no recipients could be encrypted")
+		if err == nil {
+			err = fmt.Errorf("no recipients could be encrypted")
 		}
-		return encErr
+		return err
 	}
-	if encErr != nil {
-		slog.Warn("partial encryption failure, sending to reachable recipients only", "err", encErr)
+	if err != nil {
+		slog.Warn("partial encryption failure, sending to reachable recipients only", "err", err)
 	}
 
 	sentOK := 0
@@ -283,6 +292,8 @@ func (u *User) BroadcastMessage(content string) error {
 			CT:        t.CT,
 			Time:      time.Now(),
 		}
+		// TODO: Sign a stable message envelope with IdentityPrivKey and have the
+		// recipient verify it; this field is currently always empty.
 		if err := u.SendPacketToServer("m", wire); err != nil {
 			slog.Error("failed to send message", "recipient", t.Nickname, "err", err)
 			if firstErr == nil {
@@ -311,7 +322,7 @@ func (u *User) SendPresence(status string) error {
 // StartClient establishes a connection to the server using the host and port
 // provided and runs the TUI with the given configuration.
 // It returns an error if the host or port is empty.
-func StartClient(host, port, nickname, ephemeral string, cfg Config) error {
+func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error {
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
 		slog.Warn("No host or port provided: Defaulting to 'localhost:8080'")
@@ -321,14 +332,19 @@ func StartClient(host, port, nickname, ephemeral string, cfg Config) error {
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
-	ephemeralBool := ephemeral != ""
-	cryptoPkt, err := NewUserSession(ephemeralBool)
+	// TODO: this treats "-ephemeral false" (the default) as ephemeral=true;
+	// parse a real bool so identity keys persist.
+	// === DONE ===
+	cryptoPkt, err := NewUserSession(ephemeral)
 	if err != nil {
 		slog.Error("Error generating user session", "err", err)
 		return err
 	}
 
 	// format the address string
+	// TODO: ws:// leaves the challenge, directory, and message metadata in
+	// plaintext. Use wss:// and wire certificate configuration through the
+	// server/client instead of relying on the unused TLS helper.
 	addr := fmt.Sprintf("ws://%s:%s/ws", host, port)
 
 	// create a new context with a timeout of 30 seconds

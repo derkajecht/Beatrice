@@ -12,7 +12,7 @@ func main() {
 	host := flag.String("host", "localhost", "Host of the server")
 	port := flag.String("port", "8080", "Port of the server")
 	nick := flag.String("nick", "anon", "Nickname to use")
-	ephemeral := flag.String("ephemeral", "false", "Create key just for this session.")
+	ephemeral := flag.Bool("ephemeral", false, "Create key just for this session.")
 	configPath := flag.String("config", "", "Path to config file (default: $BEATRICE_CONFIG or the user config directory)")
 	flag.Parse()
 

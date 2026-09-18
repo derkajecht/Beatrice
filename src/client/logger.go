@@ -7,7 +7,7 @@ type ChannelWriter struct {
 	Ch chan<- []byte
 }
 
-// helper function that wraps the channel to implement io.Writer
+// Write helper function that wraps the channel to implement io.Writer
 func (w *ChannelWriter) Write(p []byte) (int, error) {
 	// Must copy because slog reuses this memory buffer internally
 	buf := make([]byte, len(p))

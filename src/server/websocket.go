@@ -21,6 +21,9 @@ import (
 func (h *Hub) addClient(c *ServerClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// TODO: Every socket is registered before authentication, and no later
+	// handshake reserves a nickname. Filter unverified clients and reject
+	// duplicate verified nicknames before publishing the directory.
 	h.clients[c.ID] = c
 }
 
@@ -57,7 +60,16 @@ func (h *Hub) Listener(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case msg := <-h.broadcastChn:
+			// TODO: A panic escaping any packet handler terminates this sole hub
+			// goroutine and stops routing for every connected client. Add a
+			// recovery boundary around dispatch.
 			var packet shared.GeneralPacket
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Println("Recovered server/Listener", r)
+				}
+			}()
+
 			err := json.Unmarshal(msg.data, &packet)
 			if err != nil {
 				slog.Error("Error unmarshalling message packet", "err", err)
@@ -141,6 +153,9 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 
 	// read messages from the client synchronously
 	for {
+		// TODO: Transport-level pongs are handled internally and do not reset
+		// this per-read context. An idle client is still dropped after
+		// InactivityTimeout unless an application heartbeat is wired in.
 		readCtx, cancel := context.WithTimeout(ctx, h.InactivityTimeout)
 		var m json.RawMessage
 		err := wsjson.Read(readCtx, c.Conn, &m)
@@ -148,7 +163,12 @@ func wsHandler(ctx context.Context, c *ServerClient, h *Hub) {
 		if err != nil {
 			return
 		}
-		h.broadcastChn <- broadcastMsg{conn: c, data: []byte(m)}
+		// TODO: This synchronous send can block the connection forever when the
+		// listener is stalled or the 64-entry queue is full, applying one slow
+		// client backpressure to all routing.
+		go func() {
+			h.broadcastChn <- broadcastMsg{conn: c, data: []byte(m)}
+		}()
 	}
 }
 

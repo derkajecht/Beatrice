@@ -39,7 +39,9 @@ func (m *Nonces) Issue() (string, error) {
 	return nonce, nil
 }
 
-// Consume checks if a nonce is valid AND burns it immediately
+// Consume checks if a nonce is valid.
+// TODO: Burning happens before signature verification and nonces are not bound
+// to a connection, so an observer can consume or transplant a challenge.
 func (m *Nonces) Consume(nonce string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -49,11 +51,15 @@ func (m *Nonces) Consume(nonce string) bool {
 		return false // Replayed, unknown, or already burned
 	}
 
-	// Delete immediately so it can never be reused
-	delete(m.nonces, nonce)
-
 	// Verify it didn't expire while waiting
 	return time.Now().Before(exp)
+}
+
+func (m *Nonces) BurnNonce(nonce string) error {
+	if nonce != "" {
+		delete(m.nonces, nonce)
+	}
+	return nil
 }
 
 func (m *Nonces) cleanupNonces() {
@@ -78,6 +84,11 @@ func CheckChallenge(cr *shared.ChallengeResponse, c *ServerClient, h *Hub) bool 
 	if !h.nonces.Consume(cr.Nonce) {
 		return false
 	}
+	// The length check prevents the remote ed25519.Verify panic for malformed
+	// identity keys.
 	// Signature must prove ownership of the stored public key.
+	if len(c.PubKey) != 32 {
+		return false
+	}
 	return ed25519.Verify(c.PubKey, []byte(cr.Nonce), cr.Signature)
 }

@@ -1,6 +1,8 @@
 package shared
 
-import "runtime"
+import (
+	"runtime"
+)
 
 const (
 	Darwin  = iota // 0

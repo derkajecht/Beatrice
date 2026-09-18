@@ -48,7 +48,10 @@ func SendPacketToClient(c *ServerClient, packetType string, innerPacket any) err
 
 // Broadcast sends a packet to all connected clients
 func (h *Hub) Broadcast(packetType string, innerPacket any) {
-	h.mu.RLock() // NOTE: supposed to be read only lock and unlock?
+	h.mu.RLock()
+	// TODO: Do not hold h.mu.RLock while performing network writes. A slow
+	// client can hold this lock for the 30-second write timeout and block
+	// addClient/removeClient for every connection.
 	defer h.mu.RUnlock()
 	for _, c := range h.clients {
 		if err := SendPacketToClient(c, packetType, innerPacket); err != nil {

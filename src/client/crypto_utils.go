@@ -1,11 +1,11 @@
-// Package crypto provides cryptographic utilities for Beatrice.
+// Package client crypto provides cryptographic utilities for Beatrice.
 // It includes functions for generating new key pairs, serializing keys, and more.
 // Called by the client on startup to generate a new key pair and store it memory.
 package client
 
 import (
 	"crypto/ed25519"
-	"crypto/hpke"
+	// "crypto/hpke"
 	"crypto/rand"
 	"fmt"
 	"log/slog"
@@ -13,8 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cloudflare/circl/hpke"
+
+	"github.com/cloudflare/circl/kem"
 	"github.com/derkajecht/Beatrice/src/shared"
 )
+
+var info = []byte("beatrice")
 
 type EncryptedTarget struct {
 	Nickname string
@@ -22,19 +27,28 @@ type EncryptedTarget struct {
 	CT       []byte
 }
 
-// NewCryptoSuite returns a new crypto suite with the default settings.
-func NewCryptoSuite() SuiteConfig {
-	return SuiteConfig{
-		KEM:  hpke.MLKEM768X25519(),
-		KDF:  hpke.HKDFSHA512(),
-		AEAD: hpke.AES256GCM(),
-		Info: []byte("Beatrice"),
+func NewEncryptedTarget(nickname string, enc []byte, cT []byte) EncryptedTarget {
+	return EncryptedTarget{
+		Nickname: nickname,
+		Enc:      enc,
+		CT:       cT,
 	}
 }
 
-func NewCryptoPacket(suite SuiteConfig, priv, pub, idPub []byte, idPriv ed25519.PrivateKey) *CryptoPacket {
+// NewCryptoSuite returns a new crypto suite with the default settings.
+func NewCryptoSuite(kem hpke.KEM, kdf hpke.KDF, aead hpke.AEAD) *SuiteConfig {
+	return &SuiteConfig{
+		KEM:  kem,
+		KDF:  kdf,
+		AEAD: aead,
+		// Info: []byte("Beatrice"),
+	}
+}
+
+func NewCryptoPacket(hpkesuite hpke.Suite, suite *SuiteConfig, priv kem.PrivateKey, pub kem.PublicKey, idPub []byte, idPriv ed25519.PrivateKey) *CryptoPacket {
 	return &CryptoPacket{
-		Suite:           suite,
+		HPKESuite:       hpkesuite,
+		Suite:           *suite,
 		PrivKey:         priv,
 		PubKey:          pub,
 		IdentityPubKey:  idPub,
@@ -105,22 +119,16 @@ func loadOrCreateIdentityKey() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 // NewUserSession returns a new ephemeral key pair, an ed25519 identity key pair,
 // and a session. Returns an error on failure to generate either key pair.
 func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
-	suite := NewCryptoSuite()
+	kemID := hpke.KEM_P521_HKDF_SHA512
+	kdfID := hpke.KDF_HKDF_SHA512
+	aeadID := hpke.AEAD_AES256GCM
+	keys := NewCryptoSuite(kemID, kdfID, aeadID) // store hpke keys in struct to access later
+	suite := hpke.NewSuite(kemID, kdfID, aeadID) // init hpke crypto suite with the keys
 
-	// generate private key using the crypto suite
-	privKey, err := suite.KEM.GenerateKey()
+	// generate public & private key using the crypto suite
+	pubKey, privKey, err := keys.KEM.Scheme().GenerateKeyPair()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %w", err)
-	}
-	if privKey == nil {
-		return nil, fmt.Errorf("private key is nil")
-	}
-
-	// derive the public key from the private key and convert both to bytes
-	pubBytes := privKey.PublicKey().Bytes()
-	privBytes, err := privKey.Bytes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize private key: %w", err)
+		return nil, err
 	}
 
 	// ed25519 identity key used to sign challenge responses (and later messages).
@@ -129,6 +137,9 @@ func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
 	var idPriv ed25519.PrivateKey
 	if ephemeral {
 		idPub, idPriv, err = ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		idPub, idPriv, err = loadOrCreateIdentityKey()
 		if err != nil {
@@ -137,7 +148,7 @@ func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
 	}
 
 	// create a new crypto packet with the generated key pairs
-	return NewCryptoPacket(suite, privBytes, pubBytes, idPub, idPriv), nil
+	return NewCryptoPacket(suite, keys, privKey, pubKey, idPub, idPriv), nil
 }
 
 // EncryptMessage encrypts content for each target nickname using that user's
@@ -147,8 +158,7 @@ func NewUserSession(ephemeral bool) (*CryptoPacket, error) {
 // the successful subset is still returned so callers can deliver to reachable
 // recipients. The sender's own nickname is always skipped.
 func EncryptMessage(u *User, targets []string, content string) ([]EncryptedTarget, error) {
-	suite := u.Crypto.Suite
-	users := u.GetConnectedUserInfo()
+	users := u.ConnectedUsers
 
 	out := make([]EncryptedTarget, 0, len(targets))
 	var failed []string
@@ -157,31 +167,50 @@ func EncryptMessage(u *User, targets []string, content string) ([]EncryptedTarge
 		if target == u.Nickname {
 			continue // never encrypt to self
 		}
-		pubBytes, ok := users[target]
-		if !ok || len(pubBytes) == 0 {
-			slog.Error("no public key for target", "user", target)
+		pubKey, ok := users[target]
+		if !ok {
+			slog.Error("user not found/doesn't exist", "user", target)
 			failed = append(failed, target)
 			continue
 		}
 
-		pub, err := suite.KEM.NewPublicKey(pubBytes)
+		// Serialise public key for len check
+		// pubBytes, err := pubKey.MarshalBinary()
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// if len(pubBytes) == 0 {
+		// 	slog.Error("no public key for target", "user", target)
+		// 	failed = append(failed, target)
+		// 	continue
+		// }
+
+		// Sender gets recipient's public key
+
+		// pubKey is in bytes so need to decode the key to pass into hpke methods
+		sender, err := u.Crypto.HPKESuite.NewSender(pubKey, info)
 		if err != nil {
+			//fmt.Println("🪚 suite:", err)
 			slog.Error("failed to parse public key", "user", target, "err", err)
 			failed = append(failed, target)
 			continue
 		}
 
-		enc, sender, err := hpke.NewSender(pub, suite.KDF, suite.AEAD, suite.Info)
+		enc, sealer, err := sender.Setup(rand.Reader)
 		if err != nil {
-			slog.Error("failed to create HPKE sender", "user", target, "err", err)
+			//fmt.Println("🪚 setup:", err)
+			slog.Error("failed to setup hpke in auth: %w", "user", target, "err", err)
 			failed = append(failed, target)
 			continue
 		}
 
 		// AAD binds the ciphertext to the authenticated sender/recipient pair;
 		// metadata tampering in transit causes Open to fail on the receiver.
-		ct, err := sender.Seal(shared.MessageAAD(u.Nickname, target), []byte(content))
+		// aad := shared.MessageAAD(u.Nickname, target)
+		aad := []byte("additional data")
+		ct, err := sealer.Seal([]byte(content), aad)
 		if err != nil {
+			//fmt.Println("🪚 sealer:", err)
 			slog.Error("failed to seal message", "user", target, "err", err)
 			failed = append(failed, target)
 			continue
@@ -205,20 +234,45 @@ func DecryptMessage(u *User, enc, ct []byte, sender, recipient string) (string, 
 		return "", fmt.Errorf("message missing enc or ct. both needed for successful decryption")
 	}
 
-	priv, err := u.OwnPrivateKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to reconstruct own private key: %w", err)
-	}
-
-	suite := u.Crypto.Suite
-	r, err := hpke.NewRecipient(enc, priv, suite.KDF, suite.AEAD, suite.Info)
+	receiver, err := u.Crypto.HPKESuite.NewReceiver(u.Crypto.PrivKey, info)
 	if err != nil {
 		return "", fmt.Errorf("failed to create HPKE recipient: %w", err)
 	}
 
-	pt, err := r.Open(shared.MessageAAD(sender, recipient), ct)
+	opener, err := receiver.Setup(enc)
+	if err != nil {
+		return "", fmt.Errorf("failed to perform Setup on hpke: %w", err)
+	}
+	aad := []byte("additional data")
+
+	// NOTE: pt currently empty, suggests issue with decoding logic
+	pt, err := opener.Open(ct, aad)
+	// fmt.Println("🪚 pt:", pt)
 	if err != nil {
 		return "", fmt.Errorf("failed to open ciphertext: %w", err)
 	}
 	return string(pt), nil
+}
+
+func EncodePubKey(kemID hpke.KEM, k kem.PublicKey) (shared.WireHPKEPubKey, error) {
+	if k == nil {
+		return shared.WireHPKEPubKey{}, fmt.Errorf("nil hpke public key")
+	}
+	pubBytes, err := k.MarshalBinary()
+	if err != nil {
+		return shared.WireHPKEPubKey{}, fmt.Errorf("failed to marshal hpke public key")
+	}
+	return shared.WireHPKEPubKey{
+		KEM: uint16(kemID),
+		Key: pubBytes,
+	}, nil
+}
+
+func DecodePubKey(w shared.WireHPKEPubKey) (kem.PublicKey, error) {
+	kemID := hpke.KEM(w.KEM)
+
+	if !kemID.IsValid() {
+		return nil, fmt.Errorf("unsupported KEM: 0x%x", w.KEM)
+	}
+	return kemID.Scheme().UnmarshalBinaryPublicKey(w.Key)
 }

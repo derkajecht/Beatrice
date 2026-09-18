@@ -12,14 +12,19 @@ type GeneralPacket struct {
 	Message json.RawMessage `json:"m"`
 }
 
+type WireHPKEPubKey struct {
+	KEM uint16
+	Key []byte
+}
+
 type NicknameUpdatePacket struct {
 	Nickname string `json:"n"`
 }
 
 type HandshakePacket struct {
-	Nickname   string `json:"n"`
-	PubKey     []byte `json:"k"`  // Base64 PEM Identity (ed25519) Key — used for DB/TOFU + challenge verification
-	HPKEPubKey []byte `json:"hk"` // HPKE KEM public key — distributed to peers for message encryption
+	Nickname      string `json:"n"`
+	PubKey        []byte `json:"k"` // Base64 PEM Identity (ed25519) Key — used for DB/TOFU + challenge verification
+	EncodedPubKey WireHPKEPubKey
 }
 
 type ChallengePacket struct {
@@ -44,9 +49,12 @@ type MessagePacket struct {
 	Sender    string `json:"s"`
 	Enc       []byte `json:"enc"` // HPKE encapsulation key (Base64 on wire)
 	CT        []byte `json:"ct"`  // HPKE ciphertext (Base64 on wire)
-	Signature string `json:"sig"` // Sender's signature verifying authenticity
-	Time      time.Time
+	// Signature string `json:"sig"` // Sender's signature verifying authenticity
+	Time time.Time
 }
+
+// TODO: Without a message id/nonce and a recipient-side replay cache, a valid
+// MessagePacket can be captured and delivered repeatedly.
 
 // MessageAAD derives the deterministic additional authenticated data bound
 // into every HPKE seal/open call. It ties each ciphertext to its sender and
@@ -80,12 +88,14 @@ type PresencePacket struct {
 }
 
 type JoinPacket struct {
-	Nickname string `json:"n"`
-	PubKey   []byte `json:"k"` // HPKE KEM public key for message encryption
+	Nickname      string         `json:"n"`
+	EncodedPubKey WireHPKEPubKey `json:"k"` // HPKE KEM public key for message encryption
 }
 
 type DirPacket struct {
-	CurrentUsers map[string][]byte `json:"cu"` // map[Nickname]HPKEPublicKey
+	CurrentUsers  map[string][]byte `json:"cu"` // map[Nickname]HPKEPublicKey
+	EncodedPubKey WireHPKEPubKey
+	// CurrentUsers map[string]JoinPacket `json:"cu"` // map[Nickname]HPKEPublicKey
 }
 
 type LeavePacket struct {
@@ -97,6 +107,9 @@ type ErrPacket struct {
 	Message string `json:"m"`
 }
 
+// TODO: Unused — wire as a client heartbeat so idle users survive
+// InactivityTimeout; server handles it as a no-op. Transport pings alone do
+// not reset the server's per-read context.
 type PingPacket struct {
 	Time time.Time
 }
