@@ -389,6 +389,8 @@ func (m model) handlePacket(p packetMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.nickname = np.Nickname
+		h, _ := m.header.Update(nicknameMsg{Nickname: np.Nickname})
+		m.header = h
 		m.chat, _ = m.chat.Update(nicknameMsg{Nickname: np.Nickname})
 		return m, nil
 	case "d":

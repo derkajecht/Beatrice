@@ -26,6 +26,9 @@ func (m HeaderConfig) Init() tea.Cmd { return nil }
 
 func (m HeaderConfig) Update(msg tea.Msg) (Section, tea.Cmd) {
 	switch msg := msg.(type) {
+	case nicknameMsg:
+		m.Nickname = msg.Nickname
+		return m, nil
 	case presenceMsg:
 		m.Status = msg.Status
 		m.ErrorMsg = ""

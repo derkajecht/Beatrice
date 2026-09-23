@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/cloudflare/circl/hpke"
-
 	"github.com/cloudflare/circl/kem"
 	"github.com/derkajecht/Beatrice/src/shared"
 )

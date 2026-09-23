@@ -145,11 +145,11 @@ func renderMessage(msg chatMessage, ownNickname string, width int) []string {
 	time := lipgloss.NewStyle().Foreground(faintC).Render(s)
 
 	if mine {
-		return rightBlock(lipgloss.JoinVertical(lipgloss.Right, time, bubble), width)
+		return rightBlock(lipgloss.JoinVertical(lipgloss.Right, bubble, time), width)
 	}
 
 	name := lipgloss.NewStyle().Foreground(accentC).Bold(true).Render(msg.sender)
-	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, time, bubble))
+	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, bubble, time))
 }
 
 // renderBubble wraps content, normalizes line widths so the bubble stays
