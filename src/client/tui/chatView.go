@@ -94,12 +94,7 @@ func (m *ChatViewConfig) rebuild() {
 	}
 
 	if len(lines) == 0 {
-		lines = []string{
-			lipgloss.NewStyle().
-				Foreground(faintC).
-				Italic(true).
-				Render("No messages yet — say hello!"),
-		}
+		lines = append(lines, renderSystemLine("No messages yet - say hello!", contentW))
 	}
 
 	wasAtBottom := m.viewport.AtBottom()
@@ -149,7 +144,7 @@ func renderMessage(msg chatMessage, ownNickname string, width int) []string {
 	}
 
 	name := lipgloss.NewStyle().Foreground(accentC).Bold(true).Render(msg.sender)
-	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, bubble, time))
+	return leftBlock(lipgloss.JoinVertical(lipgloss.Left, name, bubble, time), width)
 }
 
 // renderBubble wraps content, normalizes line widths so the bubble stays
@@ -245,10 +240,11 @@ func hardBreak(s string, limit int) []string {
 }
 
 // leftBlock indents a block by one cell (left margin).
-func leftBlock(block string) []string {
+func leftBlock(block string, width int) []string {
 	lines := strings.Split(block, "\n")
 	for i := range lines {
-		lines[i] = strings.Repeat(" ", 1) + lines[i]
+		padding := max(8, (width/100)*25)
+		lines[i] = strings.Repeat(" ", padding) + lines[i]
 	}
 	return lines
 }
@@ -258,15 +254,16 @@ func rightBlock(block string, width int) []string {
 	lines := strings.Split(block, "\n")
 	for i := range lines {
 		w := lipgloss.Width(lines[i])
+		padding := max(8, (width/100)*25)
 		if w < width-1 {
-			lines[i] = strings.Repeat(" ", width-1-w) + lines[i]
+			lines[i] = strings.Repeat(" ", width-padding-w) + lines[i]
 		}
 	}
 	return lines
 }
 
 func renderSystemLine(content string, width int) string {
-	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("*** " + content + " ***")
+	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render(content)
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
 }
 

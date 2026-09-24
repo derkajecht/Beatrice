@@ -89,7 +89,7 @@ func (m SidebarConfig) View(width, height int, focused bool) string {
 	contentH := max(height-2, 1)
 
 	var b strings.Builder
-	title := lipgloss.NewStyle().Foreground(textC).Bold(true).Render("\nPeople")
+	title := lipgloss.NewStyle().Foreground(textC).Background(lipgloss.ANSIColor(1)).Bold(true).PaddingLeft(3).PaddingRight(3).Render("People")
 	// b.WriteString(titleStyle.Render("People").Align(lipgloss.Center))
 
 	if len(m.Users) == 0 {
@@ -105,7 +105,7 @@ func (m SidebarConfig) View(width, height int, focused bool) string {
 
 	users := lipgloss.NewStyle().
 		Width(contentW).
-		Height(contentH - 2).
+		Height(contentH - 1).
 		Align(lipgloss.Left).
 		Render(b.String())
 
