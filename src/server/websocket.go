@@ -66,15 +66,7 @@ func (h *Hub) Listener(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case msg := <-h.broadcastChn:
-			// TODO: A panic escaping any packet handler terminates this sole hub
-			// goroutine and stops routing for every connected client. Add a
-			// recovery boundary around dispatch.
 			var packet shared.GeneralPacket
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Println("Recovered server/Listener", r)
-				}
-			}()
 
 			err := json.Unmarshal(msg.data, &packet)
 			if err != nil {
@@ -82,40 +74,49 @@ func (h *Hub) Listener(ctx context.Context) {
 				continue
 			}
 
-			switch packet.Type {
-			case "h":
-				if err := HandleHandshake(h, msg.conn, packet); err != nil {
-					slog.Error("error handling handshake", "err", err)
-					_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
-						Message: "err_handshake_failed",
-					})
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("Recovered server/listener", "err", r, "type", packet.Type)
+					}
+				}()
+				switch packet.Type {
+				case "i":
+					return
+				case "h":
+					if err := HandleHandshake(h, msg.conn, packet); err != nil {
+						slog.Error("error handling handshake", "err", err)
+						_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
+							Message: "err_handshake_failed",
+						})
+					}
+				case "c":
+					if err := HandleChallenge(h, msg.conn, packet); err != nil {
+						slog.Error("error handling challenge", "err", err)
+						_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
+							Message: "err_challenge_failed",
+						})
+					}
+				case "m":
+					if err := HandleMessage(h, msg.conn, packet); err != nil {
+						slog.Error("error handling message", "err", err)
+					}
+				case "p":
+					if err := HandlePresence(h, msg.conn, packet); err != nil {
+						slog.Error("error handling presence", "err", err)
+					}
+				case "j":
+					if err := HandleJoin(h, msg.conn, packet); err != nil {
+						slog.Error("error handling join", "err", err)
+					}
+				case "l":
+					if err := HandleLeave(h, msg.conn, packet); err != nil {
+						slog.Error("error handling leave", "err", err)
+					}
+				default:
+					slog.Error("unknown packet type", "type", packet.Type)
 				}
-			case "c":
-				if err := HandleChallenge(h, msg.conn, packet); err != nil {
-					slog.Error("error handling challenge", "err", err)
-					_ = SendPacketToClient(msg.conn, "e", &shared.ErrPacket{
-						Message: "err_challenge_failed",
-					})
-				}
-			case "m":
-				if err := HandleMessage(h, msg.conn, packet); err != nil {
-					slog.Error("error handling message", "err", err)
-				}
-			case "p":
-				if err := HandlePresence(h, msg.conn, packet); err != nil {
-					slog.Error("error handling presence", "err", err)
-				}
-			case "j":
-				if err := HandleJoin(h, msg.conn, packet); err != nil {
-					slog.Error("error handling join", "err", err)
-				}
-			case "l":
-				if err := HandleLeave(h, msg.conn, packet); err != nil {
-					slog.Error("error handling leave", "err", err)
-				}
-			default:
-				slog.Error("unknown packet type", "type", packet.Type)
-			}
+			}()
 		}
 	}
 }

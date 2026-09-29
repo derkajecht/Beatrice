@@ -268,7 +268,9 @@ func renderSystemLine(content string, width int) string {
 }
 
 func renderLeavePacket(sender, content string, width int) string {
-	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render("--- " + sender + " " + content + " ---")
+	line := lipgloss.NewStyle().Foreground(faintC).Italic(true).Render(
+		"--- " + sender + " " + content + " ---",
+	)
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
 }
 

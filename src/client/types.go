@@ -46,7 +46,6 @@ type User struct {
 	ConnectedUsers map[string]kem.PublicKey  `json:"cu"`
 	TuiChan        chan shared.GeneralPacket `json:"-"`
 	Addr           string
-
 	// Lazily reconstructed own HPKE private key for inbound decryption,
 	// rebuilt once from CryptoPacket.PrivKey.
 	privKey     kem.PrivateKey `json:"-"`

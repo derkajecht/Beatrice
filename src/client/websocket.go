@@ -68,6 +68,9 @@ func (u *User) NewChatClient(ctx context.Context) {
 				dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
 				defer dialCancel()
 
+				connCtx, connCancel := context.WithCancel(ctx)
+				defer connCancel()
+
 				// ctx.Done() called inside ConnectWithRetry
 				conn, err := u.ConnectWithRetry(dialCtx, 3) // retry 3 times
 				if err != nil {
@@ -95,6 +98,8 @@ func (u *User) NewChatClient(ctx context.Context) {
 					slog.Error("failed to send handshake", "err", err)
 				}
 
+				go u.heartbeatLoop(connCtx)
+
 				// run readloop in a goroutine for async reading
 				// uses parent ctx - signal.NotifyContext() - only cancels on system signals (ctrl + c to exit)
 				u.readLoop(ctx) // INFO: need to put inside go routine?
@@ -107,6 +112,26 @@ func (u *User) NewChatClient(ctx context.Context) {
 				return
 			default:
 				time.Sleep(5 * time.Second)
+			}
+		}
+	}
+}
+
+// heartbeatLoop runs inside a go loop and pings a packet back to the server at inactivityTimeout/3
+// intervals
+func (u *User) heartbeatLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingPacket := shared.PingPacket{
+				Time: time.Now(),
+			}
+			if err := u.SendPacketToServer("i", pingPacket); err != nil {
+				slog.Debug("Error sending packet to server", "err", err)
 			}
 		}
 	}

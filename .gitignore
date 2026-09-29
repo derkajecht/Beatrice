@@ -217,6 +217,12 @@ __marimo__/
 # Local data (db + identity keys)
 .beatrice/
 
+# Local TLS material (paths hardcoded in src/server/websocket.go)
+# Never commit private keys
+/test/
+*.key
+*.pem
+
 # wtp
 .wtp.yml
 worktrees/
