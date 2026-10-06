@@ -23,27 +23,8 @@ func TestDefaultConfig(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("defaults must be valid, got error: %v", err)
 	}
-	want := Config{
-		Theme:             cfg.Theme, // color strings checked below via YAML round-trip
-		InactivityTimeout: 120 * time.Second,
-	}
-	if cfg.InactivityTimeout != want.InactivityTimeout {
-		t.Errorf("InactivityTimeout = %s, want %s", cfg.InactivityTimeout, want.InactivityTimeout)
-	}
-	colors := map[string]string{
-		"border": cfg.Theme.Border, "border_focus": cfg.Theme.BorderFocus,
-		"accent": cfg.Theme.Accent, "text": cfg.Theme.Text,
-		"muted": cfg.Theme.Muted, "faint": cfg.Theme.Faint,
-		"active": cfg.Theme.Active, "away": cfg.Theme.Away,
-		"error": cfg.Theme.Error,
-	}
-	for name, value := range colors {
-		if value == "" {
-			t.Errorf("default theme color %s is empty", name)
-		}
-		if err := validateColor(value); err != nil {
-			t.Errorf("default theme color %s = %q is invalid: %v", name, value, err)
-		}
+	if cfg.InactivityTimeout != 120*time.Second {
+		t.Errorf("InactivityTimeout = %s, want %s", cfg.InactivityTimeout, 120*time.Second)
 	}
 }
 
@@ -70,9 +51,6 @@ func TestLoadConfigMissingFile(t *testing.T) {
 			if cfg.InactivityTimeout != want.InactivityTimeout {
 				t.Errorf("missing file must yield defaults: got %+v, want %+v", cfg, want)
 			}
-			if cfg.Theme != want.Theme {
-				t.Errorf("missing file must yield default theme: got %+v, want %+v", cfg.Theme, want.Theme)
-			}
 		})
 	}
 }
@@ -93,9 +71,6 @@ func TestLoadConfigCreatesMissingFile(t *testing.T) {
 	if !strings.Contains(string(data), "inactivity_timeout: 2m0s") {
 		t.Errorf("generated config missing inactivity timeout: %s", data)
 	}
-	if !strings.Contains(string(data), "border_focus: \"13\"") {
-		t.Errorf("generated config missing theme: %s", data)
-	}
 }
 
 func TestLoadConfigValid(t *testing.T) {
@@ -105,34 +80,12 @@ func TestLoadConfigValid(t *testing.T) {
 		check   func(t *testing.T, cfg Config)
 	}{
 		{
-			name: "full config with ANSI and hex colors",
+			name: "full behavior config",
 			content: `
-theme:
-  border: "4"
-  border_focus: "#ff00aa"
-  accent: "13"
-  text: "#ffffff"
-  muted: "7"
-  faint: "0"
-  active: "10"
-  away: "11"
-  error: "#ff0000"
 behavior:
   inactivity_timeout: 30
 `,
 			check: func(t *testing.T, cfg Config) {
-				if cfg.Theme.Border != "4" {
-					t.Errorf("Border = %q, want \"4\"", cfg.Theme.Border)
-				}
-				if cfg.Theme.BorderFocus != "#ff00aa" {
-					t.Errorf("BorderFocus = %q, want \"#ff00aa\"", cfg.Theme.BorderFocus)
-				}
-				if cfg.Theme.Text != "#ffffff" {
-					t.Errorf("Text = %q, want \"#ffffff\"", cfg.Theme.Text)
-				}
-				if cfg.Theme.Error != "#ff0000" {
-					t.Errorf("Error = %q, want \"#ff0000\"", cfg.Theme.Error)
-				}
 				if cfg.InactivityTimeout != 30*time.Second {
 					t.Errorf("InactivityTimeout = %s, want 30s", cfg.InactivityTimeout)
 				}
@@ -153,22 +106,12 @@ behavior:
 		{
 			name: "partial config merges over defaults",
 			content: `
-theme:
-  accent: "12"
+behavior:
+  inactivity_timeout: 45s
 `,
 			check: func(t *testing.T, cfg Config) {
-				if cfg.Theme.Accent != "12" {
-					t.Errorf("Accent = %q, want \"12\"", cfg.Theme.Accent)
-				}
-				want := DefaultConfig()
-				if cfg.Theme.Border != want.Theme.Border {
-					t.Errorf("Border = %q, want default %q", cfg.Theme.Border, want.Theme.Border)
-				}
-				if cfg.Theme.Error != want.Theme.Error {
-					t.Errorf("Error = %q, want default %q", cfg.Theme.Error, want.Theme.Error)
-				}
-				if cfg.InactivityTimeout != want.InactivityTimeout {
-					t.Errorf("InactivityTimeout = %s, want default %s", cfg.InactivityTimeout, want.InactivityTimeout)
+				if cfg.InactivityTimeout != 45*time.Second {
+					t.Errorf("InactivityTimeout = %s, want 45s", cfg.InactivityTimeout)
 				}
 			},
 		},
@@ -179,15 +122,6 @@ theme:
 				want := DefaultConfig()
 				if cfg != want {
 					t.Errorf("empty file: got %+v, want defaults %+v", cfg, want)
-				}
-			},
-		},
-		{
-			name:    "ANSI color boundary 0 and 255",
-			content: "theme:\n  faint: \"0\"\n  active: \"255\"\n",
-			check: func(t *testing.T, cfg Config) {
-				if cfg.Theme.Faint != "0" || cfg.Theme.Active != "255" {
-					t.Errorf("boundary colors not preserved: faint=%q active=%q", cfg.Theme.Faint, cfg.Theme.Active)
 				}
 			},
 		},
@@ -211,7 +145,7 @@ func TestLoadConfigErrors(t *testing.T) {
 	}{
 		{
 			name:    "malformed yaml",
-			content: "theme:\n  border: [unclosed\n",
+			content: "behavior:\n  inactivity_timeout: [unclosed\n",
 			wantErr: "failed to parse config file",
 		},
 		{
@@ -220,34 +154,9 @@ func TestLoadConfigErrors(t *testing.T) {
 			wantErr: "failed to parse config file",
 		},
 		{
-			name:    "unknown theme field",
-			content: "theme:\n  not_a_color: \"3\"\n",
+			name:    "legacy theme section rejected",
+			content: "theme:\n  border: \"4\"\n",
 			wantErr: "failed to parse config file",
-		},
-		{
-			name:    "color out of ansi range",
-			content: "theme:\n  border: \"256\"\n",
-			wantErr: "invalid theme color border",
-		},
-		{
-			name:    "negative ansi color",
-			content: "theme:\n  border: \"-1\"\n",
-			wantErr: "invalid theme color border",
-		},
-		{
-			name:    "non-numeric color",
-			content: "theme:\n  border: \"red\"\n",
-			wantErr: "invalid theme color border",
-		},
-		{
-			name:    "hex color too short",
-			content: "theme:\n  border: \"#12345\"\n",
-			wantErr: "invalid theme color border",
-		},
-		{
-			name:    "hex color non-hex digits",
-			content: "theme:\n  border: \"#zzzzzz\"\n",
-			wantErr: "invalid theme color border",
 		},
 		{
 			name:    "zero inactivity timeout",
@@ -324,34 +233,4 @@ func TestLoadConfigPathResolution(t *testing.T) {
 			t.Errorf("InactivityTimeout = %s, want 333s (from default location)", cfg.InactivityTimeout)
 		}
 	})
-}
-
-func TestValidateColor(t *testing.T) {
-	tests := []struct {
-		value   string
-		wantErr bool
-	}{
-		{value: "", wantErr: false},
-		{value: "0", wantErr: false},
-		{value: "255", wantErr: false},
-		{value: "13", wantErr: false},
-		{value: "256", wantErr: true},
-		{value: "-1", wantErr: true},
-		{value: "abc", wantErr: true},
-		{value: "12x", wantErr: true},
-		{value: "#000000", wantErr: false},
-		{value: "#FF00aa", wantErr: false},
-		{value: "#12345", wantErr: true},
-		{value: "#1234567", wantErr: true},
-		{value: "#12345g", wantErr: true},
-		{value: "123456", wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.value, func(t *testing.T) {
-			err := validateColor(tt.value)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateColor(%q) error = %v, wantErr %v", tt.value, err, tt.wantErr)
-			}
-		})
-	}
 }

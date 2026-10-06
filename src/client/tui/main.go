@@ -133,19 +133,19 @@ func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nicknam
 	}
 }
 
-// newComposer builds a styled single-line message input. Its colors are
-// drawn from the current theme snapshot so ApplyTheme takes effect on the
-// next composer rebuild.
+// newComposer builds a styled single-line message input. Its colors come
+// from the built-in palette.
 func newComposer() textinput.Model {
 	in := textinput.New()
 	in.Prompt = composerPrompt
 	in.Placeholder = "Type a message…"
 	in.CharLimit = composerCharLimit
 
-	borderFocus, text, faint, muted := composerTheme()
+	borderFocus := string(borderHi)
+	text := string(textC)
+	faint := string(faintC)
+	muted := string(mutedC)
 
-	// Colours are sourced from the theme rather than hardcoded so
-	// ApplyTheme can rewire them at runtime.
 	styles := textinput.DefaultDarkStyles()
 	styles.Cursor.Blink = true
 	styles.Cursor.Color = lg.Color(borderFocus)
@@ -157,14 +157,6 @@ func newComposer() textinput.Model {
 	styles.Blurred.Placeholder = lgStyle(faint, false)
 	in.SetStyles(styles)
 	return in
-}
-
-// composerTheme pulls the subset of raw color strings the composer needs.
-// Returning them as a tuple keeps the call site readable without leaking
-// the package-level theme vars.
-func composerTheme() (borderFocus, text, faint, muted string) {
-	_, bf, _, tx, mu, fa := rawThemeSnapshot()
-	return bf, tx, fa, mu
 }
 
 // lgStyle builds a v2 lipgloss style for the bubbles v2 textinput, which uses
