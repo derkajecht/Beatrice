@@ -403,7 +403,6 @@ func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error 
 	sendPresence := func(status string) error {
 		return user.SendPresence(status)
 	}
-	tui.ApplyTheme(cfg.Theme)
 	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence, cfg.InactivityTimeout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
