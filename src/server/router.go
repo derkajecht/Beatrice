@@ -32,11 +32,12 @@ func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
 
 // beginUserRegistration
 func (h *Hub) beginUserRegistration(c *ServerClient, exists bool) error {
-	nonce, err := h.nonces.Issue()
+	err := h.nonces.Issue(c)
 	if err != nil {
 		return fmt.Errorf("failed to issue challenge nonce: %w", err)
 	}
-	if err := c.SendChallenge(h, nonce); err != nil {
+
+	if err := c.SendChallenge(h, c.NonceKey); err != nil {
 		return fmt.Errorf("failed to send challenge: %w", err)
 	}
 	return nil
@@ -46,6 +47,9 @@ func (h *Hub) beginUserRegistration(c *ServerClient, exists bool) error {
 // validates username and public key, and saves the client to the hub
 // returns an error if the handshake fails
 func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
+	// set verified to false initially
+	c.Verified = false
+
 	var hs shared.HandshakePacket
 	if err := json.Unmarshal(p.Message, &hs); err != nil {
 		return fmt.Errorf("malformed handshake: %w", err)
@@ -97,24 +101,26 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		}
 
 		if !cexists {
-			nonce, err := h.nonces.Issue()
+			err := h.nonces.Issue(c)
 			if err != nil {
 				return fmt.Errorf("failed to issue challenge nonce: %w", err)
 			}
+
 			if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
 				return fmt.Errorf("failed to store user: %w", err)
 			}
-			if err := c.SendChallenge(h, nonce); err != nil {
+			if err := c.SendChallenge(h, c.NonceKey); err != nil {
 				return fmt.Errorf("failed to send challenge: %w", err)
 			}
 		}
 
 		// Returning user under suffixed name -> prove ownership
-		nonce, err := h.nonces.Issue()
+		err = h.nonces.Issue(c)
 		if err != nil {
 			return fmt.Errorf("failed to issue challenge nonce: %w", err)
 		}
-		return c.SendChallenge(h, nonce)
+
+		return c.SendChallenge(h, c.NonceKey)
 	}
 	return nil
 }
@@ -129,8 +135,8 @@ func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 	if !CheckChallenge(&cr, c, h) {
 		return fmt.Errorf("challenge verification failed")
 	}
-	// burn nonce after challenge has been checked
-	h.nonces.BurnNonce(cr.Nonce)
+	// consume nonce after challenge has been checked
+	h.nonces.Consume(c.Nickname, cr.Nonce)
 
 	c.Verified = true
 	return completeHandshake(h, c)
@@ -147,6 +153,10 @@ func completeHandshake(h *Hub, c *ServerClient) error {
 
 	h.mu.RLock()
 	for _, client := range h.clients {
+		// only add verified users to the map
+		if !client.Verified {
+			continue
+		}
 		dirPacket.CurrentUsers[client.Nickname] = client.HPKEPubKey
 		dirPacket.EncodedPubKey.KEM = client.HPKEKem
 		dirPacket.EncodedPubKey.Key = client.HPKEPubKey

@@ -20,6 +20,7 @@ type ServerClient struct {
 	HPKEPubKey []byte // HPKE KEM public key, distributed to peers via Dir/Join packets
 	HPKEKem    uint16
 	Verified   bool
+	NonceKey   string
 }
 
 func NewServerClient(ID string, conn *websocket.Conn) *ServerClient {

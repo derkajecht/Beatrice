@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/ed25519"
+	"crypto/x509"
 	"sync"
 
 	"github.com/cloudflare/circl/hpke"
@@ -46,6 +47,7 @@ type User struct {
 	ConnectedUsers map[string]kem.PublicKey  `json:"cu"`
 	TuiChan        chan shared.GeneralPacket `json:"-"`
 	Addr           string
+	RootCas        *x509.CertPool
 	// Lazily reconstructed own HPKE private key for inbound decryption,
 	// rebuilt once from CryptoPacket.PrivKey.
 	privKey     kem.PrivateKey `json:"-"`

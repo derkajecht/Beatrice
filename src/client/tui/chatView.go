@@ -168,7 +168,7 @@ func renderBubble(content string, contentMax int, mine bool) string {
 
 	style := lipgloss.NewStyle().
 		Padding(0, 1).
-		Border(lipgloss.RoundedBorder(), true)
+		Border(lipgloss.NormalBorder(), true)
 	if mine {
 		style = style.
 			BorderForeground(borderHi).

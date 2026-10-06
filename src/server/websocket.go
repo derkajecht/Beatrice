@@ -19,18 +19,22 @@ import (
 )
 
 var (
-	CertFilePath = "/home/jmack/Documents/Beatrice/test/server.cert"
-	KeyFilePath  = "/home/jmack/Documents/Beatrice/test/host.key"
+	CertFilePath = "/home/jmack/Documents/Beatrice/test/serverCerts/server.cert"
+	KeyFilePath  = "/home/jmack/Documents/Beatrice/test/serverCerts/host.key"
 )
 
 // addClient adds a client to the hub clients map
-func (h *Hub) addClient(c *ServerClient) {
+func (h *Hub) addClient(c *ServerClient) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// TODO: Every socket is registered before authentication, and no later
 	// handshake reserves a nickname. Filter unverified clients and reject
 	// duplicate verified nicknames before publishing the directory.
+	if _, exists := h.clients[c.ID]; exists && c.Verified {
+		return nil
+	}
 	h.clients[c.ID] = c
+	return nil
 }
 
 func (h *Hub) getClient(id string) *ServerClient {

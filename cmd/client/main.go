@@ -14,6 +14,7 @@ func main() {
 	nick := flag.String("nick", "anon", "Nickname to use")
 	ephemeral := flag.Bool("ephemeral", false, "Create key just for this session.")
 	configPath := flag.String("config", "", "Path to config file (default: $BEATRICE_CONFIG or the user config directory)")
+	caPath := flag.String("ca", "", "PEM file of the CA or self-signed server certificate")
 	flag.Parse()
 
 	// Load configuration before starting the TUI so a bad config fails fast.
@@ -23,7 +24,7 @@ func main() {
 	}
 
 	// start the client with the provided args
-	if err := client.StartClient(*host, *port, *nick, *ephemeral, cfg); err != nil {
+	if err := client.StartClient(*host, *port, *nick, *caPath, *ephemeral, cfg); err != nil {
 		log.Fatal(err)
 	}
 }

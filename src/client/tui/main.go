@@ -20,16 +20,15 @@ import (
 
 // Composer constants.
 const (
-	composerPrompt  = " ❯ "
-	composerPromptW = 3 // visual cells of the prompt
-	headerHeight    = 1
+	composerPrompt            = " ❯ "
+	composerPromptW           = 3 // visual cells of the prompt
+	composerPlaceholderActive = "Type a message…"
+	composerPlaceholderAway   = ""
+	headerHeight              = 1
 
 	// mouseWheelDelta is the number of lines scrolled per mouse wheel notch.
-	// Matches the bubbles v2 viewport's default MouseWheelDelta.
 	mouseWheelDelta = 3
 
-	// Sane fallbacks for non-positive values passed to NewModel. These keep
-	// the previous behavior intact when no override is supplied.
 	defaultInactivityTimeout = 120 * time.Second
 	composerCharLimit        = 2000
 )
@@ -57,8 +56,7 @@ type (
 	inactivityTickMsg struct{}
 )
 
-// chatMsg carries a single incoming or outgoing message. Own-ness (sent vs
-// received) is derived from the model's nickname when it is rendered.
+// chatMsg carries a single incoming or outgoing message
 type chatMsg struct {
 	Sender  string
 	Content string
@@ -82,8 +80,7 @@ type errorMsg struct {
 	Content string
 }
 
-// presenceMsg carries a peer's (or the local user's) presence status into
-// the sidebar.
+// presenceMsg carries a peer's presence status into the sidebar
 type presenceMsg struct {
 	Nickname string
 	Status   UserStatus
@@ -93,23 +90,15 @@ type resetBar struct {
 	Content bool
 }
 
-// scrollMsg scrolls the chat history. A negative value scrolls up.
+// scrollMsg scrolls the chat history. Negative values scroll up.
 type scrollMsg int
 
-// chatResizeMsg re-flows the chat viewport when the terminal resizes.
 type chatResizeMsg struct {
 	width  int
 	height int
 }
 
-// NewModel builds the TUI model. nickname and send wire up the message
-// composer: on Enter, the composer text is handed to send as plaintext; the
-// client backend handles encryption and per-recipient fan-out. sendPresence
-// is the separate plaintext presence path used by the inactivity timer.
-//
-// inactivityTimeout is how long the user can be idle before the model flips
-// from active to away. Non-positive values fall back to the previous built-in
-// default so callers that haven't been updated still behave as before.
+// build the TUI model
 func NewModel(packetCh <-chan shared.GeneralPacket, logCh <-chan []byte, nickname string, send func(content string) error, sendPresence func(status string) error, inactivityTimeout time.Duration) model {
 	if inactivityTimeout <= 0 {
 		inactivityTimeout = defaultInactivityTimeout
@@ -190,6 +179,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, keyCmd := m.handleKey(msg)
 		return next, tea.Batch(cmd, keyCmd)
 
+	case tea.BlurMsg:
+		m.input.Blur()
+		m.active = false
+		m.input.Placeholder = composerPlaceholderAway
+		return m, nil
+
+	case tea.FocusMsg:
+		m, cmd := m.markActive()
+		m.input.Focus()
+		m.input.Placeholder = composerPlaceholderActive
+		return m, cmd
+
 	case tea.MouseMsg:
 		// Mouse wheel scrolls the chat history regardless of focus. The
 		// viewport itself already has MouseWheelEnabled set, but its Update
@@ -222,6 +223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// path
 		if inactivityCheck(&m) && m.active {
 			m.active = false
+			m.input.Blur()
 			return m, tea.Batch(m.presenceCmd(shared.PresenceAway), waitForInactivity())
 		}
 		return m, waitForInactivity()
@@ -293,9 +295,7 @@ func (m model) handleComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgup":
 		// Page up scrolls the chat history without disturbing the composer
-		// text. Falling through to the textinput would be a no-op for a
-		// single-line field, but intercepting explicitly keeps text input
-		// unaffected regardless of the textinput's internal handling.
+		// text.
 		_, _, _, page := m.layout()
 		m.chat, _ = m.chat.Update(scrollMsg(-max(1, page/2)))
 		return m, nil
@@ -534,7 +534,7 @@ func (m model) View() string {
 
 	// Unified chat panel: messages share one border with the composer below.
 	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder(), true, true, false, true).
+		Border(lipgloss.HiddenBorder(), true, true, false, true).
 		BorderForeground(borderC).
 		Width(chatCW).
 		Height(chatCH).
@@ -546,7 +546,7 @@ func (m model) View() string {
 	// 	Render("├" + strings.Repeat("─", chatCW-2) + "┤")
 
 	composer := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder(), true, true, true, true).
+		Border(lipgloss.NormalBorder(), true, true, true, true).
 		BorderForeground(m.composerBorderC()).
 		Width(chatCW).
 		Height(1).

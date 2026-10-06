@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,13 +22,28 @@ import (
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
+// var (
+// 	CertFilePath = "/home/jmack/Documents/Beatrice/test/serverCerts/server.cert"
+// KeyFilePath  = "/test/clientCerts/host.key"
+// )
+
 func (u *User) ConnectWithRetry(ctx context.Context, retryCount int) (*websocket.Conn, error) {
 	var lastErr error
 	for i := range retryCount {
+		// cert, err := os.ReadFile(CertFilePath)
+		// if err != nil {
+		// 	panic(err)
+		// }
+		//
+		// pool := x509.NewCertPool()
+		// if !pool.AppendCertsFromPEM(cert) {
+		// 	return nil, fmt.Errorf("no certs passed")
+		// }
+
 		customHTTPClient := &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // Use only for local testing!
+					RootCAs: u.RootCas,
 				},
 			},
 		}
@@ -293,7 +309,7 @@ func (u *User) SendPacketToServer(packetType string, innerPacket any) error {
 // returned when nothing could be encrypted or no send succeeded.
 func (u *User) BroadcastMessage(content string) error {
 	users := u.ConnectedUsers
-	// fmt.Println("🪚 u.ConnectedUsers:", u.ConnectedUsers)
+	// fmt.Println("🪚 u.ConnectedUsers:", users)
 	// early exit if no other connected users
 	if len(users) == 0 {
 		return fmt.Errorf("no other users connected")
@@ -301,6 +317,7 @@ func (u *User) BroadcastMessage(content string) error {
 
 	// create list of targets, excluding yourself
 	targets := make([]string, 0, len(users))
+	// fmt.Println("🪚 targets:", targets)
 	for nickname := range users {
 		if nickname == u.Nickname {
 			continue
@@ -359,7 +376,7 @@ func (u *User) SendPresence(status string) error {
 // StartClient establishes a connection to the server using the host and port
 // provided and runs the TUI with the given configuration.
 // It returns an error if the host or port is empty.
-func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error {
+func StartClient(host, port, nickname, caPath string, ephemeral bool, cfg Config) error {
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
 		slog.Warn("No host or port provided: Defaulting to 'localhost:8080'")
@@ -369,9 +386,6 @@ func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error 
 
 	// Call crypto suite to generate a new key pair
 	// stores the public and private keys in the user session
-	// TODO: this treats "-ephemeral false" (the default) as ephemeral=true;
-	// parse a real bool so identity keys persist.
-	// === DONE ===
 	cryptoPkt, err := NewUserSession(ephemeral)
 	if err != nil {
 		slog.Error("Error generating user session", "err", err)
@@ -394,6 +408,20 @@ func StartClient(host, port, nickname string, ephemeral bool, cfg Config) error 
 	user.Addr = addr
 	user.Nickname = nickname
 	user.Crypto = *cryptoPkt
+
+	// store server certificate in User struct for TLS config
+	if caPath != "" {
+		pem, err := os.ReadFile(caPath)
+		if err != nil {
+			return fmt.Errorf("read ca file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return fmt.Errorf("no certificates is %s", caPath)
+		}
+		user.RootCas = pool
+	}
+
 	go user.NewChatClient(rootCtx) // non-blocking
 
 	logCh := LoggerSetup()
