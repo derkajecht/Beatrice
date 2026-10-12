@@ -45,7 +45,7 @@ func (m *Nonces) Issue(c *ServerClient) error {
 	defer m.mu.Unlock()
 	m.nonces[c.Nickname] = InnerNonce{
 		Nonce: nonce,
-		Exp:   time.Now(),
+		Exp:   time.Now().Add(30 * time.Second),
 	}
 
 	return nil
@@ -54,10 +54,7 @@ func (m *Nonces) Issue(c *ServerClient) error {
 // Consume checks if the input nonce exists and has been assigned by the server. If yes, check that
 // it hasn't expired whilst the check occurs (if it has, then cleanup will catch and delete it).
 // If no, delete it from the nonce list
-func (m *Nonces) Consume(nickname, nonce string) error {
-	if nonce == "" {
-		return fmt.Errorf("nonce is empty")
-	}
+func (m *Nonces) Consume(nickname string) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -68,8 +65,10 @@ func (m *Nonces) Consume(nickname, nonce string) error {
 		return fmt.Errorf("nonce does not exist in list. could have been assigned from another machine - WARNING") // Replayed, unknown, or already burned
 	}
 
-	// delete it from the map immediately
-	delete(m.nonces, nonce)
+	// delete it from the map if expired has passed
+	if now := time.Now(); now.After(m.nonces[nickname].Exp) {
+		delete(m.nonces, nickname)
+	}
 
 	return nil
 }
@@ -79,9 +78,9 @@ func (m *Nonces) cleanupNonces() {
 	for range ticker.C {
 		m.mu.Lock()
 		now := time.Now()
-		for _, iN := range m.nonces {
+		for nickname, iN := range m.nonces {
 			if now.After(iN.Exp) {
-				delete(m.nonces, iN.Nonce) // Remove nonces that clients abandoned
+				delete(m.nonces, nickname) // Remove nonces that clients abandoned
 			}
 		}
 		m.mu.Unlock()
@@ -93,7 +92,7 @@ func (m *Nonces) cleanupNonces() {
 // ownership of the stored public key.
 func CheckChallenge(cr *shared.ChallengeResponse, c *ServerClient, h *Hub) bool {
 	// Nonce must be one we issued and must not have been used before.
-	if err := h.nonces.Consume(c.Nickname, cr.Nonce); err != nil {
+	if err := h.nonces.Consume(c.Nickname); err != nil {
 		return false
 	}
 	// The length check prevents the remote ed25519.Verify panic for malformed

@@ -227,6 +227,9 @@ __marimo__/
 .wtp.yml
 worktrees/
 
+# Local analysis docs (test rewrite plan)
+/tests.md
+
 # BEGIN oh-my-opencode-slim worktrees
 .slim/worktrees/
 .slim/worktrees.json

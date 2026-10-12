@@ -203,10 +203,8 @@ func EncryptMessage(u *User, targets []string, content string) ([]EncryptedTarge
 			continue
 		}
 
-		// AAD binds the ciphertext to the authenticated sender/recipient pair;
-		// metadata tampering in transit causes Open to fail on the receiver.
-		// aad := shared.MessageAAD(u.Nickname, target)
-		aad := []byte("additional data")
+		// AAD binds the ciphertext to the authenticated sender/recipient pair
+		aad := shared.MessageAAD(u.Nickname, target)
 		ct, err := sealer.Seal([]byte(content), aad)
 		if err != nil {
 			//fmt.Println("🪚 sealer:", err)
@@ -225,9 +223,7 @@ func EncryptMessage(u *User, targets []string, content string) ([]EncryptedTarge
 }
 
 // DecryptMessage opens an inbound HPKE message addressed to this user using
-// the user's own reconstructed private key. sender/recipient must be the
-// authoritative names from the routed packet; they are bound as AAD and must
-// match what the sender sealed. The server never sees plaintext.
+// the user's own reconstructed private key.
 func DecryptMessage(u *User, enc, ct []byte, sender, recipient string) (string, error) {
 	if len(enc) == 0 || len(ct) == 0 {
 		return "", fmt.Errorf("message missing enc or ct. both needed for successful decryption")
@@ -242,11 +238,9 @@ func DecryptMessage(u *User, enc, ct []byte, sender, recipient string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("failed to perform Setup on hpke: %w", err)
 	}
-	aad := []byte("additional data")
+	aad := shared.MessageAAD(sender, recipient)
 
-	// NOTE: pt currently empty, suggests issue with decoding logic
 	pt, err := opener.Open(ct, aad)
-	// fmt.Println("🪚 pt:", pt)
 	if err != nil {
 		return "", fmt.Errorf("failed to open ciphertext: %w", err)
 	}

@@ -16,13 +16,13 @@ import (
 // path is provided.
 const EnvConfigVar = "BEATRICE_CONFIG"
 
-// Config holds the client's runtime configuration: the inactivity timeout.
+// Config holds the client's runtime configuration: inactivity timeout.
+// more to be added
 type Config struct {
 	InactivityTimeout time.Duration
 }
 
-// DefaultConfig returns the client's built-in defaults, matching the values
-// that were hard-coded before configuration files were supported.
+// DefaultConfig returns the client's built-in defaults
 func DefaultConfig() Config {
 	return Config{
 		InactivityTimeout: 120 * time.Second,
@@ -67,9 +67,7 @@ func (d *durationValue) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// resolveConfigPath determines which file to load. Precedence: explicit path,
-// then $BEATRICE_CONFIG, then the default location under os.UserConfigDir().
-// An empty result means "no config file to load".
+// resolveConfigPath determines which file to load
 func resolveConfigPath(explicit string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
@@ -84,15 +82,7 @@ func resolveConfigPath(explicit string) (string, error) {
 	return filepath.Join(baseDir, "beatrice", "config.yml"), nil
 }
 
-// LoadConfig loads the client configuration. Behavior:
-//
-//   - Path resolution: explicit path, then $BEATRICE_CONFIG, then
-//     os.UserConfigDir()/beatrice/config.yml.
-//   - A missing file is not an error; the defaults are returned.
-//   - Malformed YAML, unknown fields, and non-positive behavior values are
-//     errors.
-//   - Keys present in the file override their defaults; absent keys keep the
-//     default values.
+// LoadConfig loads the client configuration
 func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 
@@ -115,7 +105,7 @@ func LoadConfig(path string) (Config, error) {
 		return cfg, fmt.Errorf("failed to read config file %s: %w", resolved, err)
 	}
 
-	// An empty (or comment-only) file is a valid way to say "use defaults".
+	// An empty config file = use defaults
 	if len(bytes.TrimSpace(data)) == 0 {
 		return cfg, nil
 	}

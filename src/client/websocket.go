@@ -201,10 +201,7 @@ func (u *User) readLoop(ctx context.Context) {
 			continue // challenge handled here, don't forward to the TUI
 		}
 
-		// Keep the local connected-users directory in sync before anything
-		// is forwarded to the TUI, so outbound fan-out can encrypt per user.
-		// Updates come from server-authoritative d/j/l packets only; the
-		// key fields carry HPKE public keys.
+		// dir packet
 		switch packet.Type {
 		case "d":
 			var dp shared.DirPacket
@@ -213,6 +210,8 @@ func (u *User) readLoop(ctx context.Context) {
 				continue
 			}
 			u.ApplyDirPacket(dp.CurrentUsers, dp.EncodedPubKey)
+
+		// join packet
 		case "j":
 			var jp shared.JoinPacket
 			if err := json.Unmarshal(packet.Message, &jp); err != nil {
@@ -224,6 +223,8 @@ func (u *User) readLoop(ctx context.Context) {
 				continue
 			}
 			u.ApplyJoin(jp.Nickname, pubKey)
+
+		// leave packet
 		case "l":
 			var lp shared.LeavePacket
 			if err := json.Unmarshal(packet.Message, &lp); err != nil {
@@ -231,6 +232,8 @@ func (u *User) readLoop(ctx context.Context) {
 				continue
 			}
 			u.ApplyLeave(lp.Nickname)
+
+		// message packet
 		case "m":
 			// Receive-side decryption: open the HPKE payload locally and
 			// forward a plaintext DecryptedMessage to the TUI. Failures are
@@ -238,6 +241,12 @@ func (u *User) readLoop(ctx context.Context) {
 			var mp shared.MessagePacket
 			if err := json.Unmarshal(packet.Message, &mp); err != nil {
 				slog.Error("failed to unmarshal MessagePacket", "err", err)
+				continue
+			}
+
+			verify := ed25519.Verify(u.Crypto.IdentityPubKey, []byte(mp.Sender), mp.Signature)
+			if !verify {
+				slog.Error("signature is not a valid signature of public key")
 				continue
 			}
 			plaintext, err := DecryptMessage(u, mp.Enc, mp.CT, mp.Sender, mp.Recipient)
@@ -251,6 +260,8 @@ func (u *User) readLoop(ctx context.Context) {
 				continue
 			}
 			packet.Message = local
+
+		// presence packet
 		case "p":
 			// Presence updates carry no secrets; validate the shape so
 			// malformed packets are dropped before reaching the TUI.
@@ -339,15 +350,15 @@ func (u *User) BroadcastMessage(content string) error {
 	sentOK := 0
 	var firstErr error
 	for _, t := range encrypted {
+		sig := ed25519.Sign(u.Crypto.IdentityPrivKey, []byte(u.Nickname))
 		wire := shared.MessagePacket{
 			Recipient: t.Nickname,
 			Sender:    u.Nickname,
 			Enc:       t.Enc,
 			CT:        t.CT,
 			Time:      time.Now(),
+			Signature: sig,
 		}
-		// TODO: Sign a stable message envelope with IdentityPrivKey and have the
-		// recipient verify it; this field is currently always empty.
 		if err := u.SendPacketToServer("m", wire); err != nil {
 			slog.Error("failed to send message", "recipient", t.Nickname, "err", err)
 			if firstErr == nil {
@@ -366,17 +377,18 @@ func (u *User) BroadcastMessage(content string) error {
 
 // SendPresence sends a presence packet to the server. This is a separate
 // path from encrypted chat sending: presence is plaintext metadata the
-// server is meant to see, validate, and fan out to peers. The server binds
-// the nickname to the authenticated connection, so the wire nickname here is
-// informational only.
+// server is meant to see, validate, and fan out to peers.
 func (u *User) SendPresence(status string) error {
 	return u.SendPacketToServer("p", shared.PresencePacket{Nickname: u.Nickname, Status: status})
 }
 
+// inactivityTimeout is how long the user can be idle before the client flips
+// to away
+const inactivityTimeout = 120 * time.Second
+
 // StartClient establishes a connection to the server using the host and port
-// provided and runs the TUI with the given configuration.
-// It returns an error if the host or port is empty.
-func StartClient(host, port, nickname, caPath string, ephemeral bool, cfg Config) error {
+// provided and runs the TUI. It returns an error if the host or port is empty.
+func StartClient(host, port, nickname, caPath string, ephemeral bool) error {
 	// check if host or port is empty, default to localhost:8080
 	if shared.HasEmptyArgs(host, port) {
 		slog.Warn("No host or port provided: Defaulting to 'localhost:8080'")
@@ -431,7 +443,7 @@ func StartClient(host, port, nickname, caPath string, ephemeral bool, cfg Config
 	sendPresence := func(status string) error {
 		return user.SendPresence(status)
 	}
-	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence, cfg.InactivityTimeout), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(tui.NewModel(user.TuiChan, logCh, user.Nickname, send, sendPresence, inactivityTimeout), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}

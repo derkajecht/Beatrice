@@ -34,31 +34,25 @@ type ChallengePacket struct {
 	IsNew       bool   `json:"new"`
 }
 
-// ChallengeResponse is the client's reply to a ChallengePacket: the nonce
-// signed with the client's identity (ed25519) private key.
+// ChallengeResponse is the client's reply to a ChallengePacket
+// the nonce signed with the client's identity (ed25519) private key.
 type ChallengeResponse struct {
 	Signature []byte `json:"sig"`
 	Nonce     string `json:"n"`
 }
 
-// MessagePacket is the encrypted wire representation of a chat message.
-// The payload is HPKE-sealed per recipient (Enc/CT); the server routes this
-// packet without ever being able to decrypt it. Plaintext never travels here.
+// MessagePacket is the encrypted wire representation of a chat message
 type MessagePacket struct {
 	Recipient string `json:"r"`
 	Sender    string `json:"s"`
 	Enc       []byte `json:"enc"` // HPKE encapsulation key (Base64 on wire)
 	CT        []byte `json:"ct"`  // HPKE ciphertext (Base64 on wire)
-	// Signature string `json:"sig"` // Sender's signature verifying authenticity
-	Time time.Time
+	Signature []byte `json:"sig"` // Sender's signature verifying authenticity
+	Time      time.Time
 }
 
-// TODO: Without a message id/nonce and a recipient-side replay cache, a valid
-// MessagePacket can be captured and delivered repeatedly.
-
-// MessageAAD derives the deterministic additional authenticated data bound
-// into every HPKE seal/open call. It ties each ciphertext to its sender and
-// recipient, so tampering with routing metadata causes decryption failure.
+// MessageAAD ties each ciphertext to its sender and recipient
+// so tampering with routing metadata causes decryption failure.
 // Must be used identically on both sides.
 func MessageAAD(sender, recipient string) []byte {
 	return []byte("beatrice:m\x00" + sender + "\x00" + recipient)

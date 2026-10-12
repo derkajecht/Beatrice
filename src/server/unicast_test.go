@@ -163,7 +163,9 @@ func TestClientDirectoryAnnouncementsRejected(t *testing.T) {
 		}
 	}
 
-	forge("j", shared.JoinPacket{Nickname: "mallory", PubKey: []byte("evil")})
+	forge("j", shared.JoinPacket{Nickname: "mallory", EncodedPubKey: shared.WireHPKEPubKey{
+		Key: []byte("evil"),
+	}})
 	forge("l", shared.LeavePacket{Nickname: "alice"})
 }
 

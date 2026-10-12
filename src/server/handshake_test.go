@@ -71,16 +71,25 @@ func newIdentity(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 	return pub, priv
 }
 
+// func EncodePubKey(kemID hpke.KEM, k kem.PublicKey) (shared.WireHPKEPubKey, error) {
+// 	if k == nil {
+// 		return shared.WireHPKEPubKey{}, fmt.Errorf("nil hpke public key")
+// 	}
+// }
+
 // sendHandshake writes a handshake packet presenting the given identity and
 // HPKE public keys, exactly like the real client.
 func sendHandshake(t *testing.T, conn *websocket.Conn, nickname string, pub ed25519.PublicKey, hpke []byte) {
 	t.Helper()
+	// EncodePubKey(u.Crypto.Suite.KEM, u.Crypto.PubKey)
 	writeGeneralPacket(t, conn, shared.GeneralPacket{
 		Type: "h",
 		Message: mustMarshal(t, shared.HandshakePacket{
-			Nickname:   nickname,
-			PubKey:     pub,
-			HPKEPubKey: hpke,
+			Nickname: nickname,
+			PubKey:   pub,
+			EncodedPubKey: shared.WireHPKEPubKey{
+				Key: hpke,
+			},
 		}),
 	})
 }
@@ -208,7 +217,7 @@ func TestHandshakeNewUserChallengeFlow(t *testing.T) {
 	if err := json.Unmarshal(jr.Message, &jp); err != nil {
 		t.Fatalf("unmarshal JoinPacket failed: %v", err)
 	}
-	if jp.Nickname != "alice" || string(jp.PubKey) != "hpke-alice" {
+	if jp.Nickname != "alice" || string(jp.EncodedPubKey.Key) != "hpke-alice" {
 		t.Fatalf("unexpected join packet: %+v", jp)
 	}
 

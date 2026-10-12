@@ -31,7 +31,7 @@ func (c *ServerClient) SendChallenge(h *Hub, nonce string) error {
 }
 
 // beginUserRegistration
-func (h *Hub) beginUserRegistration(c *ServerClient, exists bool) error {
+func (h *Hub) beginUserRegistration(c *ServerClient) error {
 	err := h.nonces.Issue(c)
 	if err != nil {
 		return fmt.Errorf("failed to issue challenge nonce: %w", err)
@@ -79,9 +79,9 @@ func HandleHandshake(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		if err := h.db.StoreUser(c.Nickname, c.PubKey); err != nil {
 			return fmt.Errorf("failed to store user: %w", err)
 		}
-		h.beginUserRegistration(c, exists)
+		h.beginUserRegistration(c)
 	} else if exists && bytes.Equal(storedPubKey, hs.PubKey) { // returning user
-		h.beginUserRegistration(c, exists)
+		h.beginUserRegistration(c)
 	} else {
 		cand := nickname + "-" + shortHash(hs.PubKey, 10)
 		cpk, cexists, err := h.db.GetUserPK(cand)
@@ -136,7 +136,7 @@ func HandleChallenge(h *Hub, c *ServerClient, p shared.GeneralPacket) error {
 		return fmt.Errorf("challenge verification failed")
 	}
 	// consume nonce after challenge has been checked
-	h.nonces.Consume(c.Nickname, cr.Nonce)
+	h.nonces.Consume(c.Nickname)
 
 	c.Verified = true
 	return completeHandshake(h, c)

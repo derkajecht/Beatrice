@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
-	"github.com/cloudflare/circl/kem"
 	"github.com/derkajecht/Beatrice/src/shared"
 )
 
@@ -59,11 +57,14 @@ func TestDirectoryFromHandshakeRoundTrip(t *testing.T) {
 	alice := newTestUser(t, "alice")
 	bob := newTestUser(t, "bob")
 
+	pubKey, _ := EncodePubKey(bob.Crypto.Suite.KEM, bob.Crypto.PubKey)
 	// Client side of the handshake: HPKE key travels in HandshakePacket.
 	hsBytes, err := json.Marshal(shared.HandshakePacket{
-		Nickname:   "bob",
-		PubKey:     []byte("identity-key"),
-		HPKEPubKey: bob.Crypto.PubKey,
+		Nickname: "bob",
+		PubKey:   []byte("identity-key"),
+		EncodedPubKey: shared.WireHPKEPubKey{
+			Key: pubKey.Key,
+		},
 	})
 	if err != nil {
 		t.Fatalf("marshal HandshakePacket failed: %v", err)
@@ -75,10 +76,10 @@ func TestDirectoryFromHandshakeRoundTrip(t *testing.T) {
 
 	// Server side (as completeHandshake does): HPKE key lands in the
 	// directory snapshot sent back as a DirPacket.
-	dir := shared.DirPacket{CurrentUsers: map[string]kem.PublicKey{"bob": hs.HPKEPubKey}}
+	dir := shared.DirPacket{CurrentUsers: map[string][]byte{"bob": pubKey.Key}}
 
 	// Client applies the authoritative directory exactly as readLoop does.
-	alice.ApplyDirPacket(dir.CurrentUsers)
+	alice.ApplyDirPacket(dir.CurrentUsers, pubKey)
 
 	targets, err := EncryptMessage(alice, []string{"bob"}, "via directory")
 	if err != nil {
@@ -189,21 +190,5 @@ func TestLoadOrCreateIdentityKeyRoundTrip(t *testing.T) {
 	}
 	if filepath.Dir(path) != filepath.Join(home, ".beatrice") {
 		t.Fatalf("unexpected identity key location: %s", path)
-	}
-}
-
-func TestNewCryptoSuite(t *testing.T) {
-	tests := []struct {
-		name string
-		want SuiteConfig
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NewCryptoSuite(); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewCryptoSuite() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
